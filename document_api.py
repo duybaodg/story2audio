@@ -1,7 +1,8 @@
 # document_api.py
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel
 import json
 import asyncio
 from models.document import Document, Chapter, DocumentStatus
@@ -14,6 +15,11 @@ from file_processor import (
     active_documents
 )
 from text_extractor import extract_pdf_text, extract_epub_text
+
+
+class ChapterContentRequest(BaseModel):
+    chapter_ids: List[str]
+
 
 router = APIRouter(prefix="/document", tags=["document"])
 
@@ -249,4 +255,53 @@ async def get_document_structure(document_id: str):
         "total_chapters": document.total_chapters or 0,
         "extraction_progress": document.extraction_progress,
         "chapters": []  # Will be populated from storage
+    }
+
+
+@router.post("/{document_id}/content")
+async def get_document_content(document_id: str, request: ChapterContentRequest):
+    """
+    Get full text content for selected chapters.
+
+    Concatenates the full_text of requested chapters in chapter_number order.
+    """
+    document = await get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if document.status != DocumentStatus.READY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document not ready. Current status: {document.status.value}"
+        )
+
+    # Retrieve chapters from document metadata
+    all_chapters = document.metadata.get("chapters", [])
+
+    # Filter and sort selected chapters
+    selected_chapters = [
+        ch for ch in all_chapters
+        if ch.get("chapter_id") in request.chapter_ids
+    ]
+    selected_chapters.sort(key=lambda x: x.get("chapter_number", 0))
+
+    if not selected_chapters:
+        raise HTTPException(status_code=400, detail="No valid chapters found")
+
+    # Concatenate chapter texts with chapter titles as separators
+    combined_sections = []
+    for ch in selected_chapters:
+        title = ch.get("title", f"Chapter {ch.get('chapter_number', '?')}")
+        text = ch.get("full_text", "").strip()
+        if text:
+            combined_sections.append(f"{title}\n{text}")
+
+    combined_text = "\n\n".join(combined_sections)
+
+    return {
+        "document_id": document_id,
+        "filename": document.filename,
+        "chapter_count": len(selected_chapters),
+        "word_count": sum(ch.get("word_count", 0) for ch in selected_chapters),
+        "text": combined_text
     }
