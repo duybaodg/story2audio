@@ -20,6 +20,7 @@ import edge_tts
 from gtts import gTTS
 from dotenv import load_dotenv
 from file_processor import register_cleanup_task
+from document_api import router as document_router
 
 load_dotenv()
 
@@ -62,6 +63,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Story to Audio + Live Subtitles API")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.include_router(document_router)
 
 logger = logging.getLogger("story2audio")
 
