@@ -904,6 +904,12 @@
 
         // Extraction progress streaming via SSE
         function startExtraction(documentId, filename) {
+            // Close any existing event source
+            if (uploadState.eventSource) {
+                uploadState.eventSource.close();
+                uploadState.eventSource = null;
+            }
+
             // Switch to extraction progress display
             document.getElementById('uploadProgress').classList.add('hidden');
             document.getElementById('extractionProgress').classList.remove('hidden');
@@ -913,24 +919,39 @@
             const eventSource = new EventSource(`/document/${documentId}/extract/stream`);
 
             eventSource.addEventListener('progress', (e) => {
-                const data = JSON.parse(e.data);
-                updateExtractionProgress(data);
+                try {
+                    const data = JSON.parse(e.data);
+                    updateExtractionProgress(data);
+                } catch (err) {
+                    console.error('Invalid JSON in progress event:', err);
+                }
             });
 
             eventSource.addEventListener('chapter', (e) => {
-                const data = JSON.parse(e.data);
-                uploadState.chapters.push(data.chapter);
-                updateExtractionProgress({
-                    current: uploadState.chapters.length,
-                    total: null,
-                    message: `Đã tìm: ${data.chapter.title}`
-                });
+                try {
+                    const data = JSON.parse(e.data);
+                    uploadState.chapters.push(data.chapter);
+                    updateExtractionProgress({
+                        current: uploadState.chapters.length,
+                        total: null,
+                        message: `Đã tìm: ${data.chapter.title}`
+                    });
+                } catch (err) {
+                    console.error('Invalid JSON in chapter event:', err);
+                }
             });
 
             eventSource.addEventListener('complete', (e) => {
-                const data = JSON.parse(e.data);
-                eventSource.close();
-                extractionComplete(data, filename);
+                try {
+                    const data = JSON.parse(e.data);
+                    eventSource.close();
+                    extractionComplete(data, filename);
+                } catch (err) {
+                    console.error('Invalid JSON in complete event:', err);
+                    eventSource.close();
+                    showExtractionError('Dữ liệu không hợp lệ');
+                    resetUploadUI();
+                }
             });
 
             eventSource.addEventListener('error', (e) => {
