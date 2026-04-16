@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import json
 import asyncio
 from models.document import Document, Chapter, DocumentStatus
@@ -18,7 +18,7 @@ from text_extractor import extract_pdf_text, extract_epub_text
 
 
 class ChapterContentRequest(BaseModel):
-    chapter_ids: List[str]
+    chapter_ids: List[str] = Field(min_items=1, description="List of chapter IDs to retrieve")
 
 
 router = APIRouter(prefix="/document", tags=["document"])
@@ -286,22 +286,43 @@ async def get_document_content(document_id: str, request: ChapterContentRequest)
     selected_chapters.sort(key=lambda x: x.get("chapter_number", 0))
 
     if not selected_chapters:
-        raise HTTPException(status_code=400, detail="No valid chapters found")
+        raise HTTPException(status_code=404, detail="No valid chapters found")
 
     # Concatenate chapter texts with chapter titles as separators
     combined_sections = []
+    skipped_chapters = []
+    total_word_count = 0
+
     for ch in selected_chapters:
         title = ch.get("title", f"Chapter {ch.get('chapter_number', '?')}")
         text = ch.get("full_text", "").strip()
         if text:
             combined_sections.append(f"{title}\n{text}")
+            total_word_count += ch.get("word_count", 0)
+        else:
+            skipped_chapters.append({
+                "chapter_id": ch.get("chapter_id"),
+                "title": title
+            })
+
+    if not combined_sections:
+        raise HTTPException(
+            status_code=400,
+            detail="No text content available for selected chapters"
+        )
 
     combined_text = "\n\n".join(combined_sections)
+
+    # Check if any requested chapters weren't found
+    found_ids = {ch.get("chapter_id") for ch in selected_chapters}
+    missing_ids = set(request.chapter_ids) - found_ids
 
     return {
         "document_id": document_id,
         "filename": document.filename,
-        "chapter_count": len(selected_chapters),
-        "word_count": sum(ch.get("word_count", 0) for ch in selected_chapters),
-        "text": combined_text
+        "chapter_count": len(combined_sections),
+        "word_count": total_word_count,
+        "text": combined_text,
+        "skipped_chapters": skipped_chapters,
+        "missing_chapter_ids": list(missing_ids)
     }
