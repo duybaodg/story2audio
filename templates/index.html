@@ -419,6 +419,9 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -428,11 +431,11 @@
     <div class="tab-nav">
         <button class="tab-btn active" data-tab="paste-text">
             <span class="tab-icon">📄</span>
-            <span class="tab-label">Paste Text</span>
+            <span class="tab-label">Dán Văn Bản</span>
         </button>
         <button class="tab-btn" data-tab="upload-document">
             <span class="tab-icon">📁</span>
-            <span class="tab-label">Upload Document</span>
+            <span class="tab-label">Tải Tài Liệu</span>
         </button>
     </div>
 
@@ -486,22 +489,22 @@
 
     </div>
 
-    <div class="card" id="upload-document-tab" style="display: none;">
+    <div class="card hidden" id="upload-document-tab">
         <!-- Upload Zone -->
         <div id="uploadZone" class="upload-zone">
             <div class="upload-icon">📂</div>
-            <div class="upload-text">Drag & drop PDF or EPUB here</div>
-            <div class="upload-subtext">or click to browse</div>
-            <button class="browse-btn" type="button">Browse Files</button>
-            <div class="upload-limit">Max file size: 50 MB</div>
-            <input type="file" id="fileInput" accept=".pdf,.epub,application/pdf,application/epub+zip" style="display: none;">
+            <div class="upload-text">Kéo thả PDF hoặc EPUB vào đây</div>
+            <div class="upload-subtext">hoặc nhấn để chọn file</div>
+            <button class="browse-btn" type="button">Chọn File</button>
+            <div class="upload-limit">Kích thước tối đa: 50 MB</div>
+            <input type="file" id="fileInput" accept=".pdf,.epub,application/pdf,application/epub+zip" class="hidden">
         </div>
 
         <!-- Upload Progress -->
-        <div id="uploadProgress" class="upload-progress" style="display: none;">
+        <div id="uploadProgress" class="upload-progress hidden">
             <div class="progress-info">
                 <span class="progress-filename" id="progressFilename"></span>
-                <span class="progress-status" id="progressStatus">Uploading...</span>
+                <span class="progress-status" id="progressStatus">Đang tải lên...</span>
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" id="uploadProgressFill"></div>
@@ -510,10 +513,10 @@
         </div>
 
         <!-- Extraction Progress -->
-        <div id="extractionProgress" class="extraction-progress" style="display: none;">
+        <div id="extractionProgress" class="extraction-progress hidden">
             <div class="extraction-info">
                 <span class="extraction-icon">⏳</span>
-                <span class="extraction-text" id="extractionText">Extracting chapters...</span>
+                <span class="extraction-text" id="extractionText">Đang trích xuất chương...</span>
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" id="extractionProgressFill"></div>
@@ -522,19 +525,19 @@
         </div>
 
         <!-- Chapter Tree (populated in later task) -->
-        <div id="chapterContainer" style="display: none;">
+        <div id="chapterContainer" class="hidden">
             <div class="chapter-header">
                 <span id="documentTitle" class="document-title"></span>
             </div>
             <div id="chapterTree" class="chapter-tree"></div>
             <div class="chapter-actions">
-                <button class="chapter-action-btn" id="selectAllBtn">Select All</button>
-                <button class="chapter-action-btn" id="clearSelectionBtn">Clear Selection</button>
+                <button class="chapter-action-btn" id="selectAllBtn">Chọn tất cả</button>
+                <button class="chapter-action-btn" id="clearSelectionBtn">Bỏ chọn</button>
             </div>
             <div class="selection-summary" id="selectionSummary">
-                <span class="summary-text" id="summaryText">0 chapters selected · 0 words · ~0 min</span>
+                <span class="summary-text" id="summaryText">0 chương đã chọn · 0 từ · ~0 phút</span>
             </div>
-            <button class="preview-btn" id="previewBtn" disabled>Preview Selected → Convert</button>
+            <button class="preview-btn" id="previewBtn" disabled>Xem trước đã chọn → Chuyển đổi</button>
         </div>
     </div>
 
