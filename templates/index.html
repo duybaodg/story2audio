@@ -265,6 +265,160 @@
         .tab-label {
             font-size: 14px;
         }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed #cbd5e1;
+            border-radius: 14px;
+            padding: 48px 24px;
+            text-align: center;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        .upload-zone:hover, .upload-zone.drag-over {
+            border-color: #2563eb;
+            background: #eff6ff;
+        }
+        .upload-zone.upload-error {
+            border-color: #ef4444;
+            background: #fef2f2;
+        }
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+        .upload-text {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 4px;
+        }
+        .upload-subtext {
+            font-size: 13px;
+            color: #64748b;
+            margin-bottom: 16px;
+        }
+        .browse-btn {
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 1px solid #cbd5e1;
+            background: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .browse-btn:hover {
+            border-color: #2563eb;
+            background: #eff6ff;
+        }
+        .upload-limit {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        /* Progress Bars */
+        .upload-progress, .extraction-progress {
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+        .progress-info, .extraction-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .progress-filename {
+            font-weight: 600;
+            color: #1e293b;
+        }
+        .progress-status {
+            font-size: 13px;
+            color: #64748b;
+        }
+        .extraction-icon {
+            font-size: 18px;
+            margin-right: 8px;
+        }
+        .extraction-text {
+            font-weight: 600;
+            color: #1e293b;
+        }
+        .progress-details, .extraction-details {
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 8px;
+        }
+
+        /* Chapter Tree */
+        .chapter-header {
+            padding: 12px 16px;
+            background: #f0fdf4;
+            border-radius: 10px;
+            margin-bottom: 16px;
+        }
+        .document-title {
+            font-weight: 600;
+            color: #166534;
+        }
+        .chapter-tree {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 16px;
+        }
+        .chapter-actions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .chapter-action-btn {
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            background: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .chapter-action-btn:hover {
+            border-color: #2563eb;
+            background: #eff6ff;
+        }
+        .selection-summary {
+            padding: 12px 16px;
+            background: #f8fafc;
+            border-radius: 10px;
+            margin-bottom: 12px;
+        }
+        .summary-text {
+            font-size: 13px;
+            color: #475569;
+        }
+        .preview-btn {
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            border: none;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: #fff;
+            font-weight: 700;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .preview-btn:hover:not(:disabled) {
+            filter: brightness(1.05);
+        }
+        .preview-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -333,7 +487,55 @@
     </div>
 
     <div class="card" id="upload-document-tab" style="display: none;">
-        <!-- Upload UI content will be added in later tasks -->
+        <!-- Upload Zone -->
+        <div id="uploadZone" class="upload-zone">
+            <div class="upload-icon">📂</div>
+            <div class="upload-text">Drag & drop PDF or EPUB here</div>
+            <div class="upload-subtext">or click to browse</div>
+            <button class="browse-btn" type="button">Browse Files</button>
+            <div class="upload-limit">Max file size: 50 MB</div>
+            <input type="file" id="fileInput" accept=".pdf,.epub,application/pdf,application/epub+zip" style="display: none;">
+        </div>
+
+        <!-- Upload Progress -->
+        <div id="uploadProgress" class="upload-progress" style="display: none;">
+            <div class="progress-info">
+                <span class="progress-filename" id="progressFilename"></span>
+                <span class="progress-status" id="progressStatus">Uploading...</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="uploadProgressFill"></div>
+            </div>
+            <div class="progress-details" id="progressDetails">Chunk 0/0 · 0 MB / 0 MB</div>
+        </div>
+
+        <!-- Extraction Progress -->
+        <div id="extractionProgress" class="extraction-progress" style="display: none;">
+            <div class="extraction-info">
+                <span class="extraction-icon">⏳</span>
+                <span class="extraction-text" id="extractionText">Extracting chapters...</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="extractionProgressFill"></div>
+            </div>
+            <div class="extraction-details" id="extractionDetails"></div>
+        </div>
+
+        <!-- Chapter Tree (populated in later task) -->
+        <div id="chapterContainer" style="display: none;">
+            <div class="chapter-header">
+                <span id="documentTitle" class="document-title"></span>
+            </div>
+            <div id="chapterTree" class="chapter-tree"></div>
+            <div class="chapter-actions">
+                <button class="chapter-action-btn" id="selectAllBtn">Select All</button>
+                <button class="chapter-action-btn" id="clearSelectionBtn">Clear Selection</button>
+            </div>
+            <div class="selection-summary" id="selectionSummary">
+                <span class="summary-text" id="summaryText">0 chapters selected · 0 words · ~0 min</span>
+            </div>
+            <button class="preview-btn" id="previewBtn" disabled>Preview Selected → Convert</button>
+        </div>
     </div>
 
     <div class="card status-wrap" id="statusWrap">
