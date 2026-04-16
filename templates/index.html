@@ -371,6 +371,55 @@
             overflow-y: auto;
             margin-bottom: 16px;
         }
+        .chapter-group {
+            margin-bottom: 8px;
+        }
+        .chapter-group-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #f1f5f9;
+            border-radius: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .chapter-group-header:hover {
+            background: #e2e8f0;
+        }
+        .chapter-toggle {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            transition: transform 0.2s ease;
+            color: #64748b;
+        }
+        .chapter-toggle.expanded {
+            transform: rotate(90deg);
+        }
+        .chapter-list {
+            padding-left: 24px;
+            margin-top: 4px;
+        }
+        .chapter-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 6px;
+        }
+        .chapter-item:hover {
+            background: #f8fafc;
+        }
+        .chapter-title {
+            flex: 1;
+            font-size: 14px;
+            color: #334155;
+        }
+        .chapter-meta {
+            font-size: 12px;
+            color: #94a3b8;
+        }
         .chapter-actions {
             display: flex;
             gap: 8px;
@@ -646,6 +695,15 @@
             chapters: [],
             eventSource: null
         };
+
+        // Chapter selection state
+        let selectedChapterIds = new Set();
+        let expandedGroups = new Set();
+
+        function calculateDuration(wordCount) {
+            if (!wordCount) return 0;
+            return Math.ceil(wordCount / 150); // ~150 words per minute
+        }
 
         function validateFile(file) {
             const errors = [];
@@ -1014,10 +1072,192 @@
             }
         }
 
-        // Placeholder for chapter tree rendering (implemented in Task 9)
         function renderChapterTree(filename) {
-            console.log('Rendering chapter tree for:', filename, uploadState.chapters);
-            // TODO: Implement in Task 9
+            const container = document.getElementById('chapterContainer');
+            const tree = document.getElementById('chapterTree');
+
+            document.getElementById('documentTitle').textContent =
+                `✓ ${filename} — ${uploadState.chapters.length} chương đã tìm thấy`;
+
+            // Clear existing tree
+            tree.innerHTML = '';
+
+            // Group chapters by hierarchy (simple flat grouping for MVP)
+            const groups = groupChapters(uploadState.chapters);
+
+            // Render tree
+            groups.forEach((group, groupIndex) => {
+                const groupElement = renderGroup(group, groupIndex);
+                tree.appendChild(groupElement);
+            });
+
+            // Show container
+            container.classList.remove('hidden');
+
+            // Update summary
+            updateSelectionSummary();
+
+            // Set up event listeners
+            setupChapterListeners();
+        }
+
+        function groupChapters(chapters) {
+            // Simple grouping - all chapters in one group for MVP
+            return [{
+                id: 'all-chapters',
+                title: 'Tất cả chương',
+                wordCount: chapters.reduce((sum, ch) => sum + (ch.word_count || 0), 0),
+                chapters: chapters
+            }];
+        }
+
+        function renderGroup(group, groupIndex) {
+            const groupDiv = document.createElement('div');
+            groupDiv.className = 'chapter-group';
+            groupDiv.dataset.groupId = group.id;
+
+            const header = document.createElement('div');
+            header.className = 'chapter-group-header';
+            header.innerHTML = `
+                <span class="chapter-toggle ${expandedGroups.has(group.id) ? 'expanded' : ''}">▶</span>
+                <input type="checkbox" class="chapter-checkbox group-checkbox" data-group-id="${group.id}">
+                <span class="chapter-title">${group.title}</span>
+                <span class="chapter-meta">${group.wordCount?.toLocaleString() || 0} từ</span>
+            `;
+
+            const chaptersDiv = document.createElement('div');
+            chaptersDiv.className = 'chapter-list';
+            chaptersDiv.style.display = expandedGroups.has(group.id) ? 'block' : 'none';
+
+            group.chapters.forEach(chapter => {
+                const chapterEl = renderChapter(chapter);
+                chaptersDiv.appendChild(chapterEl);
+            });
+
+            groupDiv.appendChild(header);
+            groupDiv.appendChild(chaptersDiv);
+
+            return groupDiv;
+        }
+
+        function renderChapter(chapter) {
+            const div = document.createElement('div');
+            div.className = 'chapter-item';
+            div.dataset.chapterId = chapter.chapter_id;
+
+            const duration = calculateDuration(chapter.word_count);
+            const isSelected = selectedChapterIds.has(chapter.chapter_id);
+
+            div.innerHTML = `
+                <input type="checkbox" class="chapter-checkbox item-checkbox"
+                       data-chapter-id="${chapter.chapter_id}" ${isSelected ? 'checked' : ''}>
+                <span class="chapter-title">${chapter.title}</span>
+                <span class="chapter-meta">
+                    ${chapter.word_count?.toLocaleString() || 0} từ · ~${duration} phút
+                </span>
+            `;
+
+            return div;
+        }
+
+        function setupChapterListeners() {
+            const tree = document.getElementById('chapterTree');
+
+            // Toggle expand/collapse
+            tree.querySelectorAll('.chapter-group-header').forEach(header => {
+                header.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('chapter-checkbox')) return;
+
+                    const groupDiv = header.parentElement;
+                    const groupId = groupDiv.dataset.groupId;
+                    const toggle = header.querySelector('.chapter-toggle');
+                    const list = groupDiv.querySelector('.chapter-list');
+
+                    if (expandedGroups.has(groupId)) {
+                        expandedGroups.delete(groupId);
+                        toggle.classList.remove('expanded');
+                        list.style.display = 'none';
+                    } else {
+                        expandedGroups.add(groupId);
+                        toggle.classList.add('expanded');
+                        list.style.display = 'block';
+                    }
+                });
+            });
+
+            // Checkbox changes
+            tree.querySelectorAll('.chapter-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', (e) => {
+                    handleCheckboxChange(e.target);
+                });
+            });
+
+            // Select All / Clear buttons
+            document.getElementById('selectAllBtn').addEventListener('click', selectAllChapters);
+            document.getElementById('clearSelectionBtn').addEventListener('click', clearAllChapters);
+
+            // Preview button
+            document.getElementById('previewBtn').addEventListener('click', previewSelectedChapters);
+        }
+
+        function handleCheckboxChange(checkbox) {
+            if (checkbox.classList.contains('group-checkbox')) {
+                const groupId = checkbox.dataset.groupId;
+                const groupDiv = checkbox.closest('.chapter-group');
+                const itemCheckboxes = groupDiv.querySelectorAll('.item-checkbox');
+
+                itemCheckboxes.forEach(item => {
+                    const chapterId = item.dataset.chapterId;
+                    if (checkbox.checked) {
+                        selectedChapterIds.add(chapterId);
+                        item.checked = true;
+                    } else {
+                        selectedChapterIds.delete(chapterId);
+                        item.checked = false;
+                    }
+                });
+            } else {
+                const chapterId = checkbox.dataset.chapterId;
+                if (checkbox.checked) {
+                    selectedChapterIds.add(chapterId);
+                } else {
+                    selectedChapterIds.delete(chapterId);
+                }
+            }
+
+            updateSelectionSummary();
+        }
+
+        function selectAllChapters() {
+            uploadState.chapters.forEach(ch => {
+                selectedChapterIds.add(ch.chapter_id);
+            });
+
+            document.querySelectorAll('.item-checkbox').forEach(cb => cb.checked = true);
+            updateSelectionSummary();
+        }
+
+        function clearAllChapters() {
+            selectedChapterIds.clear();
+            document.querySelectorAll('.item-checkbox').forEach(cb => cb.checked = false);
+            document.querySelectorAll('.group-checkbox').forEach(cb => cb.checked = false);
+            updateSelectionSummary();
+        }
+
+        function updateSelectionSummary() {
+            const selected = uploadState.chapters.filter(ch => selectedChapterIds.has(ch.chapter_id));
+            const totalWords = selected.reduce((sum, ch) => sum + (ch.word_count || 0), 0);
+            const totalDuration = selected.reduce((sum, ch) => sum + calculateDuration(ch.word_count), 0);
+
+            document.getElementById('summaryText').textContent =
+                `${selected.length} chương đã chọn · ${totalWords.toLocaleString()} từ · ~${totalDuration} phút`;
+
+            document.getElementById('previewBtn').disabled = selected.length === 0;
+        }
+
+        // Placeholder for preview (implemented in Task 1)
+        function previewSelectedChapters() {
+            console.log('Preview selected chapters:', Array.from(selectedChapterIds));
         }
 
         const textInput = document.getElementById('textInput');
