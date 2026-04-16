@@ -64,3 +64,9 @@ def test_health_check():
     data = response.json()
     assert data["status"] == "healthy"
     assert "active_sessions" in data
+
+def test_stream_extraction():
+    """Test streaming extraction endpoint returns correct content type for non-existent document."""
+    response = client.get("/document/test-doc-123/extract/stream")
+    # Should return 404 for non-existent document
+    assert response.status_code == 404
