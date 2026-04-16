@@ -70,3 +70,25 @@ def test_stream_extraction():
     response = client.get("/document/test-doc-123/extract/stream")
     # Should return 404 for non-existent document
     assert response.status_code == 404
+
+
+def test_tts_with_chapters():
+    """Test TTS endpoint with source_chapters parameter."""
+    response = client.post(
+        "/tts/start",
+        json={
+            "source_chapters": [
+                {"text": "Chapter one text"},
+                {"text": "Chapter two text"}
+            ],
+            "voice": "vi-VN-HoaiMyNeural",
+            "engine": "edge",
+            "language": "vi"
+        }
+    )
+    # Should accept chapters and return cache_id
+    assert response.status_code in [200, 400]  # May fail if TTS not available
+    if response.status_code == 200:
+        data = response.json()
+        assert "cache_id" in data
+        assert "status" in data

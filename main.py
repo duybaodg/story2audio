@@ -9,7 +9,7 @@ import hashlib
 import asyncio
 import unicodedata
 from datetime import timedelta
-from typing import List, Dict, AsyncGenerator, Optional, Tuple
+from typing import List, Dict, AsyncGenerator, Optional, Tuple, Union
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
@@ -169,7 +169,8 @@ SENTENCE_END_RE = re.compile(r"[.!?…。！？][\"'”’»」』）】]*$")
 # Pydantic
 # ---------------------------------------------------------------------------
 class TTSRequest(BaseModel):
-    text: str
+    text: str = ""  # Make optional when using source_chapters
+    source_chapters: Optional[List[Dict[str, str]]] = None  # NEW
     voice: str = "vi-VN-HoaiMyNeural"
     engine: str = "edge"   # edge | gtts
     language: str = "vi"
@@ -1217,15 +1218,26 @@ async def get_voices():
 
 @app.post("/tts/start")
 async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
-    text = normalize_text(request.text)
-    if not text:
+    # If source_chapters provided, concatenate texts
+    # NOTE: MVP validation - uses .get("text", "") for safety.
+    # Missing "text" keys result in empty strings, caught by validation below.
+    # Production use should add explicit schema validation for chapter structure.
+    if request.source_chapters and len(request.source_chapters) > 0:
+        combined_text = "\n\n".join([
+            chapter.get("text", "") for chapter in request.source_chapters
+        ])
+        text_to_process = normalize_text(combined_text)
+    else:
+        text_to_process = normalize_text(request.text)
+
+    if not text_to_process:
         raise HTTPException(status_code=400, detail="Text must not be empty")
 
     engine = validate_engine(request.engine)
     language = validate_language(request.language)
     voice = validate_voice(language, request.voice, engine)
 
-    cache_id = get_cache_id(text, voice, engine, language)
+    cache_id = get_cache_id(text_to_process, voice, engine, language)
     require_subtitles = engine == "edge"
 
     if is_cache_valid(cache_id, require_subtitles=require_subtitles):
@@ -1249,7 +1261,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
     if os.path.exists(get_audio_path(cache_id)) or os.path.exists(get_meta_path(cache_id)):
         cleanup_incomplete_cache(cache_id)
 
-    chunk_preview = split_text_into_chunks(text, language=language)
+    chunk_preview = split_text_into_chunks(text_to_process, language=language)
 
     generation_status[cache_id] = {
         "status": "queued",
@@ -1275,7 +1287,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
         },
     )
 
-    background_tasks.add_task(generate_chunks, text, voice, engine, cache_id, language, chunk_preview)
+    background_tasks.add_task(generate_chunks, text_to_process, voice, engine, cache_id, language, chunk_preview)
 
     return {
         "cache_id": cache_id,
