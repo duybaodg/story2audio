@@ -631,6 +631,147 @@
             MediaSource.isTypeSupported('audio/mpeg')
         );
 
+        // Upload state
+        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+        const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+        const VALID_TYPES = ['application/pdf', 'application/epub+zip'];
+
+        let uploadState = {
+            uploadId: null,
+            documentId: null,
+            totalChunks: 0,
+            uploadedChunks: 0,
+            bytesSent: 0,
+            totalBytes: 0,
+            chapters: []
+        };
+
+        function validateFile(file) {
+            const errors = [];
+
+            // Check file type
+            if (!VALID_TYPES.includes(file.type) && !file.name.match(/\.(pdf|epub)$/i)) {
+                errors.push('Chỉ hỗ trợ file PDF và EPUB');
+            }
+
+            // Check file size
+            if (file.size > MAX_FILE_SIZE) {
+                const mb = (file.size / (1024 * 1024)).toFixed(1);
+                errors.push(`File là ${mb} MB. Kích thước tối đa là 50 MB. Vui lòng chia nhỏ file và tải từng phần.`);
+            }
+
+            // Check if file is empty
+            if (file.size === 0) {
+                errors.push('File trống');
+            }
+
+            return {
+                valid: errors.length === 0,
+                errors
+            };
+        }
+
+        async function initiateUpload(file) {
+            const checksum = await calculateChecksum(file);
+
+            const formData = new FormData();
+            formData.append('filename', file.name);
+            formData.append('file_size', file.size.toString());
+            formData.append('checksum', checksum);
+
+            const response = await fetch('/document/upload/initiate', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Không thể bắt đầu tải lên');
+            }
+
+            return await response.json();
+        }
+
+        async function calculateChecksum(file) {
+            // Simple hash for MVP
+            const buffer = await file.slice(0, 1024).arrayBuffer();
+            const view = new Uint8Array(buffer);
+            let hash = 0;
+            for (let i = 0; i < view.length; i++) {
+                hash = ((hash << 5) - hash) + view[i];
+                hash = hash & hash;
+            }
+            return Math.abs(hash).toString(16);
+        }
+
+        async function uploadChunk(file, chunkNumber, uploadId) {
+            const start = chunkNumber * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, file.size);
+            const chunk = file.slice(start, end);
+
+            const formData = new FormData();
+            formData.append('upload_id', uploadId);
+            formData.append('chunk_number', chunkNumber.toString());
+            formData.append('chunk', chunk);
+
+            const response = await fetch('/document/upload/chunk', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Không thể tải chunk ${chunkNumber + 1}`);
+            }
+
+            return await response.json();
+        }
+
+        async function uploadFileChunks(file, uploadId, totalChunks) {
+            for (let i = 0; i < totalChunks; i++) {
+                const result = await uploadChunk(file, i, uploadId);
+
+                uploadState.uploadedChunks = result.chunks_received || i + 1;
+                uploadState.bytesSent = (i + 1) * CHUNK_SIZE;
+                if (uploadState.bytesSent > file.size) {
+                    uploadState.bytesSent = file.size;
+                }
+
+                updateUploadProgress();
+
+                // Check if all chunks received
+                if (result.chunks_received >= totalChunks) {
+                    break;
+                }
+            }
+        }
+
+        function updateUploadProgress() {
+            const pct = uploadState.totalChunks > 0
+                ? (uploadState.uploadedChunks / uploadState.totalChunks) * 100
+                : 0;
+
+            document.getElementById('uploadProgressFill').style.width = pct + '%';
+            document.getElementById('progressDetails').textContent =
+                `Chunk ${uploadState.uploadedChunks}/${uploadState.totalChunks} · ${formatBytes(uploadState.bytesSent)} / ${formatBytes(uploadState.totalBytes)}`;
+        }
+
+        async function completeUpload(uploadId) {
+            const formData = new FormData();
+            formData.append('upload_id', uploadId);
+
+            const response = await fetch('/document/upload/complete', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Không thể hoàn tất tải lên');
+            }
+
+            return await response.json();
+        }
+
         const textInput = document.getElementById('textInput');
         const engineSel = document.getElementById('engine');
         const voiceSel = document.getElementById('voice');
