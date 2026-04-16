@@ -789,6 +789,124 @@
             return await response.json();
         }
 
+        // Upload UI event handlers
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const browseBtn = document.querySelector('.browse-btn');
+
+        // Drag and drop handlers
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('drag-over');
+        });
+
+        uploadZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('drag-over');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('drag-over');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileSelection(files[0]);
+            }
+        });
+
+        // File picker handlers
+        browseBtn.addEventListener('click', () => fileInput.click());
+        uploadZone.addEventListener('click', (e) => {
+            if (e.target === uploadZone || e.target.closest('.upload-icon, .upload-text, .upload-subtext')) {
+                fileInput.click();
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelection(e.target.files[0]);
+            }
+        });
+
+        // File selection handler
+        async function handleFileSelection(file) {
+            // Validate file
+            const validation = validateFile(file);
+
+            if (!validation.valid) {
+                showValidationError(validation.errors);
+                return;
+            }
+
+            // Reset state
+            resetUploadState();
+
+            // Show progress
+            uploadZone.classList.add('hidden');
+            document.getElementById('uploadProgress').classList.remove('hidden');
+            document.getElementById('progressFilename').textContent = file.name;
+
+            try {
+                // Initiate upload
+                const initResult = await initiateUpload(file);
+
+                uploadState.uploadId = initResult.upload_id;
+                uploadState.totalBytes = file.size;
+                uploadState.totalChunks = Math.ceil(file.size / initResult.chunk_size);
+
+                // Upload chunks
+                await uploadFileChunks(file, uploadState.uploadId, uploadState.totalChunks);
+
+                // Complete upload
+                const completeResult = await completeUpload(uploadState.uploadId);
+                uploadState.documentId = completeResult.document_id;
+
+                // Start extraction (will be implemented in next task)
+                startExtraction(completeResult.document_id, file.name);
+
+            } catch (error) {
+                console.error('Upload error:', error);
+                showUploadError(error.message);
+                resetUploadUI();
+            }
+        }
+
+        function resetUploadState() {
+            uploadState = {
+                uploadId: null,
+                documentId: null,
+                totalChunks: 0,
+                uploadedChunks: 0,
+                bytesSent: 0,
+                totalBytes: 0,
+                chapters: []
+            };
+        }
+
+        function resetUploadUI() {
+            uploadZone.classList.remove('hidden');
+            document.getElementById('uploadProgress').classList.add('hidden');
+            document.getElementById('extractionProgress').classList.add('hidden');
+            document.getElementById('chapterContainer').classList.add('hidden');
+            fileInput.value = '';
+        }
+
+        // Error display functions (temporary - will be replaced with modals in later task)
+        function showValidationError(errors) {
+            alert('⚠️ File Không Hợp Lệ\n\n' + errors.join('\n• '));
+        }
+
+        function showUploadError(message) {
+            alert('⚠️ Tải Lên Thất Bại\n\n' + message);
+        }
+
+        // Placeholder for extraction function (implemented in next task)
+        function startExtraction(documentId, filename) {
+            // This will be implemented in Task 6
+            console.log('Starting extraction for:', documentId, filename);
+        }
+
         const textInput = document.getElementById('textInput');
         const engineSel = document.getElementById('engine');
         const voiceSel = document.getElementById('voice');
