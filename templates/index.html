@@ -727,20 +727,37 @@
         }
 
         async function uploadFileChunks(file, uploadId, totalChunks) {
+            const MAX_RETRIES = 3;
+
             for (let i = 0; i < totalChunks; i++) {
-                const result = await uploadChunk(file, i, uploadId);
+                let retries = 0;
+                let success = false;
 
-                uploadState.uploadedChunks = result.chunks_received || i + 1;
-                uploadState.bytesSent = (i + 1) * CHUNK_SIZE;
-                if (uploadState.bytesSent > file.size) {
-                    uploadState.bytesSent = file.size;
-                }
+                while (retries < MAX_RETRIES && !success) {
+                    try {
+                        const result = await uploadChunk(file, i, uploadId);
 
-                updateUploadProgress();
+                        uploadState.uploadedChunks = result.chunks_received || i + 1;
+                        uploadState.bytesSent = (i + 1) * CHUNK_SIZE;
+                        if (uploadState.bytesSent > file.size) {
+                            uploadState.bytesSent = file.size;
+                        }
 
-                // Check if all chunks received
-                if (result.chunks_received >= totalChunks) {
-                    break;
+                        updateUploadProgress();
+                        success = true;
+
+                        // Check if all chunks received
+                        if (result.chunks_received >= totalChunks) {
+                            break;
+                        }
+                    } catch (error) {
+                        retries++;
+                        if (retries >= MAX_RETRIES) {
+                            throw new Error(`Không thể tải chunk ${i + 1} sau ${MAX_RETRIES} lần thử`);
+                        }
+                        // Wait before retry (exponential backoff)
+                        await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+                    }
                 }
             }
         }
