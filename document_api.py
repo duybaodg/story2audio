@@ -146,6 +146,8 @@ async def stream_extraction(document_id: str):
         pass
 
     # Update status
+    # NOTE: Thread safety limitation - multiple simultaneous requests to same document
+    # could cause race conditions. Production use should add locks.
     document.status = DocumentStatus.EXTRACTING
     active_documents[document_id] = document
 
@@ -193,6 +195,8 @@ async def stream_extraction(document_id: str):
                 yield f"event: chapter\ndata: {json.dumps(chapter_data)}\n\n"
 
             # Update document status
+            # NOTE: Thread safety limitation - multiple simultaneous requests to same document
+            # could cause race conditions. Production use should add locks.
             document.total_chapters = len(progress_chapters)
             document.status = DocumentStatus.READY
             document.extraction_progress = 1.0
@@ -214,6 +218,8 @@ async def stream_extraction(document_id: str):
             yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
 
             # Update document status
+            # NOTE: Thread safety limitation - multiple simultaneous requests to same document
+            # could cause race conditions. Production use should add locks.
             document.status = DocumentStatus.ERROR
             active_documents[document_id] = document
 
