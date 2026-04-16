@@ -643,7 +643,8 @@
             uploadedChunks: 0,
             bytesSent: 0,
             totalBytes: 0,
-            chapters: []
+            chapters: [],
+            eventSource: null
         };
 
         function validateFile(file) {
@@ -901,10 +902,101 @@
             alert('⚠️ Tải Lên Thất Bại\n\n' + message);
         }
 
-        // Placeholder for extraction function (implemented in next task)
+        // Extraction progress streaming via SSE
         function startExtraction(documentId, filename) {
-            // This will be implemented in Task 6
-            console.log('Starting extraction for:', documentId, filename);
+            // Switch to extraction progress display
+            document.getElementById('uploadProgress').classList.add('hidden');
+            document.getElementById('extractionProgress').classList.remove('hidden');
+
+            uploadState.chapters = [];
+
+            const eventSource = new EventSource(`/document/${documentId}/extract/stream`);
+
+            eventSource.addEventListener('progress', (e) => {
+                const data = JSON.parse(e.data);
+                updateExtractionProgress(data);
+            });
+
+            eventSource.addEventListener('chapter', (e) => {
+                const data = JSON.parse(e.data);
+                uploadState.chapters.push(data.chapter);
+                updateExtractionProgress({
+                    current: uploadState.chapters.length,
+                    total: null,
+                    message: `Đã tìm: ${data.chapter.title}`
+                });
+            });
+
+            eventSource.addEventListener('complete', (e) => {
+                const data = JSON.parse(e.data);
+                eventSource.close();
+                extractionComplete(data, filename);
+            });
+
+            eventSource.addEventListener('error', (e) => {
+                console.error('Extraction error:', e);
+                eventSource.close();
+                showExtractionError('Trích xuất thất bại. Vui lòng thử lại.');
+                resetUploadUI();
+            });
+
+            uploadState.eventSource = eventSource;
+        }
+
+        function updateExtractionProgress(data) {
+            const pct = data.total
+                ? Math.min((data.current / data.total) * 100, 99)
+                : null;
+
+            if (pct !== null) {
+                document.getElementById('extractionProgressFill').style.width = pct + '%';
+            }
+
+            document.getElementById('extractionDetails').textContent =
+                data.message || `Đang xử lý ${data.current}/${data.total || '?'}`;
+        }
+
+        function extractionComplete(data, filename) {
+            document.getElementById('extractionProgress').classList.add('hidden');
+
+            if (uploadState.chapters.length === 0) {
+                showNoChaptersDialog();
+            } else {
+                renderChapterTree(filename);
+            }
+        }
+
+        function showExtractionError(message) {
+            alert('⚠️ Lỗi Trích Xuất\n\n' + message);
+        }
+
+        function showNoChaptersDialog() {
+            const confirmed = confirm(
+                'ℹ️ Không Tìm Thấy Chương\n\n' +
+                'Không thể phát hiện cấu trúc chương.\n' +
+                'Toàn bộ tài liệu sẽ được xử lý như một chương.\n\n' +
+                'Tiếp tục?'
+            );
+
+            if (confirmed) {
+                // Create single chapter from full document
+                uploadState.chapters = [{
+                    chapter_id: uploadState.documentId + '_full',
+                    chapter_number: 1,
+                    title: 'Tài liệu đầy đủ',
+                    word_count: 0,
+                    text_preview: 'Nội dung tài liệu đầy đủ'
+                }];
+                renderChapterTree('Tài liệu');
+            } else {
+                resetUploadUI();
+            }
+        }
+
+        // Placeholder for chapter tree rendering (implemented in Task 9)
+        function renderChapterTree(filename) {
+            console.log('Rendering chapter tree for:', filename, uploadState.chapters);
+            // TODO: Implement in Task 9
         }
 
         const textInput = document.getElementById('textInput');
