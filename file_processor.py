@@ -253,7 +253,7 @@ async def start_cleanup_scheduler():
 
 def register_cleanup_task(background_tasks: BackgroundTasks):
     """
-    Register cleanup task to run in background.
+    Register cleanup scheduler task to run in background continuously.
     Call this during FastAPI startup event.
     """
-    background_tasks.add_task(cleanup_expired_sessions)
+    background_tasks.add_task(start_cleanup_scheduler)
