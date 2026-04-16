@@ -5,6 +5,8 @@ import asyncio
 from typing import AsyncGenerator, List
 from pathlib import Path
 from models import Chapter, FileType, ExtractionMethod
+import PyPDF2
+import pdfplumber
 
 # Configuration
 EXTRACTION_PAGE_BATCH = int(os.getenv("EXTRACTION_PAGE_BATCH", "20"))
@@ -149,7 +151,6 @@ async def extract_pdf_text(document_id: str, file_path: str) -> AsyncGenerator[C
     """
     try:
         # Try pdfplumber first (better quality)
-        import pdfplumber
 
         with pdfplumber.open(file_path) as pdf:
             total_pages = len(pdf.pages)
@@ -178,7 +179,6 @@ async def extract_pdf_text(document_id: str, file_path: str) -> AsyncGenerator[C
     except Exception as e:
         # Fallback to PyPDF2
         try:
-            import PyPDF2
 
             with open(file_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
