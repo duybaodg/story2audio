@@ -8,6 +8,10 @@ from datetime import datetime, timedelta, UTC
 from typing import Dict, Optional
 from pathlib import Path
 from models import UploadSession, Document, DocumentStatus, FileType
+from fastapi import BackgroundTasks
+import logging
+
+logger = logging.getLogger(__name__)
 
 def _get_config():
     """Get configuration from environment variables."""
@@ -231,3 +235,25 @@ async def cleanup_expired_sessions():
             except OSError:
                 pass
         del active_sessions[session_id]
+
+
+async def start_cleanup_scheduler():
+    """
+    Start background task to clean up expired sessions.
+    Should be called during application startup.
+    """
+    while True:
+        try:
+            await cleanup_expired_sessions()
+            logger.info("Completed cleanup of expired sessions")
+        except Exception as e:
+            logger.error(f"Cleanup error: {e}")
+        await asyncio.sleep(3600)  # Run every hour
+
+
+def register_cleanup_task(background_tasks: BackgroundTasks):
+    """
+    Register cleanup task to run in background.
+    Call this during FastAPI startup event.
+    """
+    background_tasks.add_task(cleanup_expired_sessions)

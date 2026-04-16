@@ -2,6 +2,8 @@
 import pytest
 import asyncio
 import hashlib
+from datetime import datetime, timedelta
+from datetime import UTC
 from pathlib import Path
 import sys
 import os
@@ -20,9 +22,12 @@ from file_processor import (
     complete_upload,
     get_document,
     cleanup_expired_sessions,
+    start_cleanup_scheduler,
+    register_cleanup_task,
     active_sessions,
     active_documents
 )
+from models import Document, FileType
 
 @pytest.fixture(autouse=True)
 def cleanup_storage():
@@ -118,3 +123,22 @@ async def test_missing_chunks():
 
     with pytest.raises(ValueError, match="Missing chunks"):
         await complete_upload(session.upload_id)
+
+@pytest.mark.asyncio
+async def test_cleanup_expired_documents():
+    # Create expired document
+    doc = Document(
+        document_id="expired-doc",
+        filename="expired.pdf",
+        file_type=FileType.PDF,
+        file_size=1000,
+        file_path="/tmp/test_expired.pdf",
+        expires_at=datetime.now(UTC) - timedelta(hours=1)
+    )
+    active_documents["expired-doc"] = doc
+
+    # Run cleanup
+    await cleanup_expired_sessions()
+
+    # Verify expired doc removed
+    assert "expired-doc" not in active_documents

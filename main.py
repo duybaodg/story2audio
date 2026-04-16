@@ -19,6 +19,7 @@ from pydantic import BaseModel
 import edge_tts
 from gtts import gTTS
 from dotenv import load_dotenv
+from file_processor import register_cleanup_task
 
 load_dotenv()
 
@@ -1643,6 +1644,14 @@ async def debug_chunks(request: TTSRequest):
 @app.get("/health")
 async def health():
     return {"ok": True, "version": VERSION}
+
+@app.on_event("startup")
+async def startup_event():
+    """Register background cleanup task on startup."""
+    from fastapi import BackgroundTasks
+    background_tasks = BackgroundTasks()
+    register_cleanup_task(background_tasks)
+    logger.info("Document upload cleanup task registered")
 
 
 # ---------------------------------------------------------------------------
