@@ -16,7 +16,82 @@ Story2Audio chuyển đổi văn bản, truyện, bài báo... thành âm thanh 
 - 🎙️ **Nhiều giọng đọc** — Hàng chục giọng đọc Neural tự nhiên cho mỗi ngôn ngữ (nam, nữ, trẻ em...).
 - 💾 **Tải về dễ dàng** — Tải file MP3, file phụ đề SRT và WebVTT chỉ bằng một cú click.
 - ⚡ **Lưu cache thông minh** — Văn bản đã chuyển đổi sẽ được lưu lại, lần sau mở lại là phát ngay không cần tạo lại.
+
+## 📄 Document Upload
+
+Upload PDF and EPUB files to convert ebooks and documents into audio:
+
+- **Chunked Upload:** Supports files up to 50MB with 5MB chunked transfer
+- **Smart Extraction:** Automatic chapter detection and structure analysis
+- **Quality Assessment:** Text quality scoring with OCR recommendations
+- **Session Storage:** Auto-cleanup after 24 hours
+- **Large File Support:** Optimized for 200+ page documents
+
+### Upload Workflow
+
+1. Upload PDF/EPUB file (chunked transfer)
+2. Preview chapter structure in real-time
+3. Select specific chapters or entire document
+4. Convert selected content to audio
+5. Download audio with synchronized subtitles
+
+### API Endpoints
+
+```bash
+# Initiate upload
+POST /document/upload/initiate
+
+# Upload chunks
+POST /document/upload/chunk
+
+# Complete upload
+POST /document/upload/complete
+
+# Stream extraction progress
+GET /document/{id}/extract/stream
+
+# Get document structure
+GET /document/{id}/structure
+```
+
+### Usage Example
+
+```python
+import requests
+
+# Initiate upload
+response = requests.post("http://localhost:8000/document/upload/initiate", json={
+    "filename": "ebook.pdf",
+    "file_size": 15728640,
+    "checksum": "abc123..."
+})
+upload_id = response.json()["upload_id"]
+
+# Upload chunks (5MB each)
+with open("ebook.pdf", "rb") as f:
+    chunk_number = 0
+    while True:
+        chunk = f.read(5242880)  # 5MB
+        if not chunk:
+            break
+        requests.post("http://localhost:8000/document/upload/chunk", 
+            data={"upload_id": upload_id, "chunk_number": chunk_number},
+            files={"chunk": chunk})
+        chunk_number += 1
+
+# Complete upload
+response = requests.post("http://localhost:8000/document/upload/complete",
+    data={"upload_id": upload_id})
+document_id = response.json()["document_id"]
+
+# Stream extraction progress
+response = requests.get(f"http://localhost:8000/document/{document_id}/extract/stream", stream=True)
+for line in response.iter_lines():
+    if line:
+        print(line.decode())
+```
 - 🐳 **Dễ dàng tự host** — Hỗ trợ Docker, Docker Compose, triển khai trên Coolify, Railway, VPS...
+- 📄 **Upload tài liệu** — Tải lên PDF và EPUB để chuyển đổi sách và tài liệu thành audio có phụ đề.
 
 ## 🚀 Sử dụng
 
