@@ -471,6 +471,33 @@
         .hidden {
             display: none;
         }
+
+        .source-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: #f0fdf4;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: #166534;
+        }
+
+        .change-selection-btn {
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid #bbf7d0;
+            background: #fff;
+            font-size: 12px;
+            font-weight: 600;
+            color: #166534;
+            cursor: pointer;
+        }
+
+        .change-selection-btn:hover {
+            background: #f0fdf4;
+        }
     </style>
 </head>
 <body>
@@ -1288,9 +1315,80 @@
             document.getElementById('previewBtn').disabled = selected.length === 0;
         }
 
-        // Placeholder for preview (implemented in Task 1)
-        function previewSelectedChapters() {
-            console.log('Preview selected chapters:', Array.from(selectedChapterIds));
+        async function previewSelectedChapters() {
+            if (selectedChapterIds.size === 0) {
+                alert('Vui lòng chọn ít nhất một chương.');
+                return;
+            }
+
+            const btn = document.getElementById('previewBtn');
+            btn.disabled = true;
+            btn.textContent = 'Đang tải...';
+
+            try {
+                const response = await fetch(`/document/${uploadState.documentId}/content`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chapter_ids: Array.from(selectedChapterIds)
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Không thể tải nội dung');
+                }
+
+                const data = await response.json();
+                showContentInTextarea(data);
+
+            } catch (error) {
+                console.error('Preview error:', error);
+                alert('⚠️ Không thể tải nội dung\n\n' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Xem trước đã chọn → Chuyển đổi';
+            }
+        }
+
+        function showContentInTextarea(data) {
+            // Store document source info
+            window.documentSource = {
+                documentId: uploadState.documentId,
+                filename: data.filename,
+                chapterIds: Array.from(selectedChapterIds),
+                chapterCount: data.chapter_count
+            };
+
+            // Switch to paste text tab
+            switchTab('paste-text');
+
+            // Populate textarea
+            textInput.value = data.text;
+
+            // Add source indicator
+            showSourceIndicator(data);
+        }
+
+        function showSourceIndicator(data) {
+            // Remove existing indicator if present
+            const existing = document.querySelector('.source-indicator');
+            if (existing) existing.remove();
+
+            // Create indicator
+            const indicator = document.createElement('div');
+            indicator.className = 'source-indicator';
+            indicator.innerHTML = `
+                📋 Từ: ${data.filename} — ${data.chapter_count} chương đã chọn
+                <button class="change-selection-btn">Thay đổi lựa chọn</button>
+            `;
+
+            // Insert before textarea
+            textInput.parentNode.insertBefore(indicator, textInput);
+
+            // Add change selection handler
+            indicator.querySelector('.change-selection-btn').addEventListener('click', () => {
+                switchTab('upload-document');
+            });
         }
 
         const textInput = document.getElementById('textInput');
@@ -1785,6 +1883,13 @@
         player.addEventListener('canplay', applyPlaybackRate);
 
         convertBtn.addEventListener('click', async () => {
+            // Clear document source indicator when starting new conversion
+            const sourceIndicator = document.querySelector('.source-indicator');
+            if (sourceIndicator && !textInput.value.trim()) {
+                sourceIndicator.remove();
+                window.documentSource = null;
+            }
+
             const text = textInput.value.trim();
             const engine = engineSel.value;
             const voice = voiceSel.value;
