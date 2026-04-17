@@ -747,7 +747,7 @@
     </div>
 
     <!-- Modal Overlay -->
-    <div id="modalOverlay" class="modal-overlay hidden">
+    <div id="modalOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
         <div class="modal-card">
             <div class="modal-header">
                 <span class="modal-icon" id="modalIcon"></span>
@@ -825,9 +825,9 @@
 
             // Set icon
             const icons = {
-                error: '',
-                warning: '',
-                info: '',
+                error: '⚠️',
+                warning: '⚠️',
+                info: 'ℹ️',
                 success: '✓'
             };
             icon.textContent = icons[options.variant] || icons.info;
@@ -859,6 +859,16 @@
         function closeModal() {
             document.getElementById('modalOverlay').classList.add('hidden');
         }
+
+        // Escape key handler to close modal
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const overlay = document.getElementById('modalOverlay');
+                if (overlay && !overlay.classList.contains('hidden')) {
+                    closeModal();
+                }
+            }
+        });
 
         const MSE_SUPPORTED = (
             typeof MediaSource !== 'undefined' &&
@@ -944,15 +954,12 @@
         }
 
         async function calculateChecksum(file) {
-            // Simple hash for MVP
-            const buffer = await file.slice(0, 1024).arrayBuffer();
-            const view = new Uint8Array(buffer);
-            let hash = 0;
-            for (let i = 0; i < view.length; i++) {
-                hash = ((hash << 5) - hash) + view[i];
-                hash = hash & hash;
-            }
-            return Math.abs(hash).toString(16);
+            // Calculate full MD5 hash using Web Crypto API
+            const arrayBuffer = await file.arrayBuffer();
+            const hashBuffer = await crypto.subtle.digest('MD5', arrayBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            return hashHex;
         }
 
         async function uploadChunk(file, chunkNumber, uploadId) {
