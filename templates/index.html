@@ -498,6 +498,103 @@
         .change-selection-btn:hover {
             background: #f0fdf4;
         }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            animation: fadeIn 0.15s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-card {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+            max-width: 400px;
+            width: 90%;
+            animation: slideUp 0.2s ease;
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 20px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .modal-icon {
+            font-size: 24px;
+        }
+
+        .modal-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .modal-body {
+            padding: 16px 20px;
+            color: #475569;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .modal-actions {
+            padding: 12px 20px 16px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .modal-btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            background: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .modal-btn:hover {
+            background: #f1f5f9;
+        }
+
+        .modal-btn.primary {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: #fff;
+            border-color: transparent;
+        }
+
+        .modal-btn.primary:hover {
+            filter: brightness(1.05);
+        }
+
+        /* Modal variants */
+        .modal-card.error .modal-icon { color: #ef4444; }
+        .modal-card.warning .modal-icon { color: #f59e0b; }
+        .modal-card.info .modal-icon { color: #3b82f6; }
+        .modal-card.success .modal-icon { color: #22c55e; }
     </style>
 </head>
 <body>
@@ -649,6 +746,18 @@
         Mẹo: với audio rất dài, hãy đợi subtitle live xuất hiện vài cue đầu tiên rồi mới nghe để cảm giác đồng bộ hơn.
     </div>
 
+    <!-- Modal Overlay -->
+    <div id="modalOverlay" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <span class="modal-icon" id="modalIcon"></span>
+                <span class="modal-title" id="modalTitle"></span>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-actions" id="modalActions"></div>
+        </div>
+    </div>
+
     <script>
         const SAMPLE_TEXT = {
             vi: 'Ngày xửa ngày xưa, trong một khu rừng xanh thẳm, có một chú thỏ nhỏ rất thông minh và tốt bụng. Mỗi buổi sáng, chú thường chạy quanh hồ nước để chào những người bạn của mình.',
@@ -701,6 +810,55 @@
 
         // Initialize paste-text tab as active
         switchTab('paste-text');
+
+        // Modal functions
+        function showModal(options) {
+            const overlay = document.getElementById('modalOverlay');
+            const icon = document.getElementById('modalIcon');
+            const title = document.getElementById('modalTitle');
+            const body = document.getElementById('modalBody');
+            const actions = document.getElementById('modalActions');
+            const card = overlay.querySelector('.modal-card');
+
+            // Set variant
+            card.className = 'modal-card ' + (options.variant || 'info');
+
+            // Set icon
+            const icons = {
+                error: '',
+                warning: '',
+                info: '',
+                success: '✓'
+            };
+            icon.textContent = icons[options.variant] || icons.info;
+
+            // Set title and body
+            title.textContent = options.title || '';
+            body.innerHTML = (options.message || '').replace(/\n/g, '<br>');
+
+            // Clear and add actions
+            actions.innerHTML = '';
+
+            if (options.actions) {
+                options.actions.forEach(action => {
+                    const btn = document.createElement('button');
+                    btn.className = 'modal-btn' + (action.primary ? ' primary' : '');
+                    btn.textContent = action.label;
+                    btn.onclick = () => {
+                        overlay.classList.add('hidden');
+                        if (action.callback) action.callback();
+                    };
+                    actions.appendChild(btn);
+                });
+            }
+
+            // Show modal
+            overlay.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('modalOverlay').classList.add('hidden');
+        }
 
         const MSE_SUPPORTED = (
             typeof MediaSource !== 'undefined' &&
@@ -986,13 +1144,31 @@
             fileInput.value = '';
         }
 
-        // Error display functions (temporary - will be replaced with modals in later task)
+        // Error display functions
         function showValidationError(errors) {
-            alert('⚠️ File Không Hợp Lệ\n\n' + errors.join('\n• '));
+            showModal({
+                variant: 'error',
+                title: 'File Không Hợp Lệ',
+                message: '• ' + errors.join('\n• '),
+                actions: [
+                    { label: 'OK', primary: true }
+                ]
+            });
         }
 
         function showUploadError(message) {
-            alert('⚠️ Tải Lên Thất Bại\n\n' + message);
+            showModal({
+                variant: 'error',
+                title: 'Tải Lên Thất Bại',
+                message: message + '\n\nBạn có muốn thử lại?',
+                actions: [
+                    { label: 'Hủy', callback: () => resetUploadUI() },
+                    { label: 'Thử lại', primary: true, callback: () => {
+                        // User will need to select file again
+                        resetUploadUI();
+                    }}
+                ]
+            });
         }
 
         // Extraction progress streaming via SSE
@@ -1081,30 +1257,36 @@
         }
 
         function showExtractionError(message) {
-            alert('⚠️ Lỗi Trích Xuất\n\n' + message);
+            showModal({
+                variant: 'error',
+                title: 'Lỗi Trích Xuất',
+                message: message,
+                actions: [
+                    { label: 'OK', primary: true, callback: () => resetUploadUI() }
+                ]
+            });
         }
 
         function showNoChaptersDialog() {
-            const confirmed = confirm(
-                'ℹ️ Không Tìm Thấy Chương\n\n' +
-                'Không thể phát hiện cấu trúc chương.\n' +
-                'Toàn bộ tài liệu sẽ được xử lý như một chương.\n\n' +
-                'Tiếp tục?'
-            );
-
-            if (confirmed) {
-                // Create single chapter from full document
-                uploadState.chapters = [{
-                    chapter_id: uploadState.documentId + '_full',
-                    chapter_number: 1,
-                    title: 'Tài liệu đầy đủ',
-                    word_count: 0,
-                    text_preview: 'Nội dung tài liệu đầy đủ'
-                }];
-                renderChapterTree('Tài liệu');
-            } else {
-                resetUploadUI();
-            }
+            showModal({
+                variant: 'warning',
+                title: 'Không Tìm Thấy Chương',
+                message: 'Không thể phát hiện cấu trúc chương.\nToàn bộ tài liệu sẽ được xử lý như một chương.\n\nTiếp tục?',
+                actions: [
+                    { label: 'Hủy', callback: () => resetUploadUI() },
+                    { label: 'Tiếp tục', primary: true, callback: () => {
+                        // Create single chapter from full document
+                        uploadState.chapters = [{
+                            chapter_id: uploadState.documentId + '_full',
+                            chapter_number: 1,
+                            title: 'Tài liệu đầy đủ',
+                            word_count: 0,
+                            text_preview: 'Nội dung tài liệu đầy đủ'
+                        }];
+                        renderChapterTree('Tài liệu');
+                    }}
+                ]
+            });
         }
 
         function renderChapterTree(filename) {
@@ -1317,7 +1499,14 @@
 
         async function previewSelectedChapters() {
             if (selectedChapterIds.size === 0) {
-                alert('Vui lòng chọn ít nhất một chương.');
+                showModal({
+                    variant: 'warning',
+                    title: 'Chưa Chọn Chương',
+                    message: 'Vui lòng chọn ít nhất một chương.',
+                    actions: [
+                        { label: 'OK', primary: true }
+                    ]
+                });
                 return;
             }
 
@@ -1343,7 +1532,14 @@
 
             } catch (error) {
                 console.error('Preview error:', error);
-                alert('⚠️ Không thể tải nội dung\n\n' + error.message);
+                showModal({
+                    variant: 'error',
+                    title: 'Không thể tải nội dung',
+                    message: error.message,
+                    actions: [
+                        { label: 'OK', primary: true }
+                    ]
+                });
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Xem trước đã chọn → Chuyển đổi';
@@ -1904,7 +2100,14 @@
             const voice = voiceSel.value;
 
             if (!text) {
-                alert('Vui lòng nhập nội dung trước.');
+                showModal({
+                    variant: 'warning',
+                    title: 'Chưa Nhập Nội Dung',
+                    message: 'Vui lòng nhập nội dung văn bản trước khi chuyển đổi.',
+                    actions: [
+                        { label: 'OK', primary: true }
+                    ]
+                });
                 return;
             }
 
