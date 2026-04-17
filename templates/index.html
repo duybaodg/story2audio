@@ -1362,8 +1362,10 @@
             // Switch to paste text tab
             switchTab('paste-text');
 
-            // Populate textarea
-            textInput.value = data.text;
+            // Populate textarea with null check
+            if (textInput) {
+                textInput.value = data.text;
+            }
 
             // Add source indicator
             showSourceIndicator(data);
@@ -1377,16 +1379,23 @@
             // Create indicator
             const indicator = document.createElement('div');
             indicator.className = 'source-indicator';
-            indicator.innerHTML = `
-                📋 Từ: ${data.filename} — ${data.chapter_count} chương đã chọn
-                <button class="change-selection-btn">Thay đổi lựa chọn</button>
-            `;
+
+            const textSpan = document.createElement('span');
+            textSpan.textContent = `📋 Từ: ${data.filename} — ${data.chapter_count} chương đã chọn`;
+
+            const changeBtn = document.createElement('button');
+            changeBtn.className = 'change-selection-btn';
+            changeBtn.textContent = 'Thay đổi lựa chọn';
+
+            indicator.append(textSpan, changeBtn);
 
             // Insert before textarea
-            textInput.parentNode.insertBefore(indicator, textInput);
+            if (textInput && textInput.parentNode) {
+                textInput.parentNode.insertBefore(indicator, textInput);
+            }
 
             // Add change selection handler
-            indicator.querySelector('.change-selection-btn').addEventListener('click', () => {
+            changeBtn.addEventListener('click', () => {
                 switchTab('upload-document');
             });
         }
