@@ -699,6 +699,13 @@
         // Chapter selection state
         let selectedChapterIds = new Set();
         let expandedGroups = new Set();
+        let chapterListenersSetup = false;
+
+        function resetChapterState() {
+            selectedChapterIds.clear();
+            expandedGroups.clear();
+            chapterListenersSetup = false;
+        }
 
         function calculateDuration(wordCount) {
             if (!wordCount) return 0;
@@ -941,6 +948,7 @@
                 totalBytes: 0,
                 chapters: []
             };
+            resetChapterState();
         }
 
         function resetUploadUI() {
@@ -1118,12 +1126,25 @@
 
             const header = document.createElement('div');
             header.className = 'chapter-group-header';
-            header.innerHTML = `
-                <span class="chapter-toggle ${expandedGroups.has(group.id) ? 'expanded' : ''}">▶</span>
-                <input type="checkbox" class="chapter-checkbox group-checkbox" data-group-id="${group.id}">
-                <span class="chapter-title">${group.title}</span>
-                <span class="chapter-meta">${group.wordCount?.toLocaleString() || 0} từ</span>
-            `;
+
+            const toggle = document.createElement('span');
+            toggle.className = 'chapter-toggle' + (expandedGroups.has(group.id) ? ' expanded' : '');
+            toggle.textContent = '▶';
+
+            const groupCheck = document.createElement('input');
+            groupCheck.type = 'checkbox';
+            groupCheck.className = 'chapter-checkbox group-checkbox';
+            groupCheck.dataset.groupId = group.id;
+
+            const title = document.createElement('span');
+            title.className = 'chapter-title';
+            title.textContent = group.title;
+
+            const meta = document.createElement('span');
+            meta.className = 'chapter-meta';
+            meta.textContent = (group.wordCount?.toLocaleString() || 0) + ' từ';
+
+            header.append(toggle, groupCheck, title, meta);
 
             const chaptersDiv = document.createElement('div');
             chaptersDiv.className = 'chapter-list';
@@ -1148,19 +1169,36 @@
             const duration = calculateDuration(chapter.word_count);
             const isSelected = selectedChapterIds.has(chapter.chapter_id);
 
-            div.innerHTML = `
-                <input type="checkbox" class="chapter-checkbox item-checkbox"
-                       data-chapter-id="${chapter.chapter_id}" ${isSelected ? 'checked' : ''}>
-                <span class="chapter-title">${chapter.title}</span>
-                <span class="chapter-meta">
-                    ${chapter.word_count?.toLocaleString() || 0} từ · ~${duration} phút
-                </span>
-            `;
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.className = 'chapter-checkbox item-checkbox';
+            check.dataset.chapterId = chapter.chapter_id;
+            if (isSelected) check.checked = true;
+
+            const title = document.createElement('span');
+            title.className = 'chapter-title';
+            title.textContent = chapter.title;
+
+            const meta = document.createElement('span');
+            meta.className = 'chapter-meta';
+            meta.textContent = `${chapter.word_count?.toLocaleString() || 0} từ · ~${duration} phút`;
+
+            div.append(check, title, meta);
 
             return div;
         }
 
+        function setupButtonListeners() {
+            // These listeners are set up once at page load
+            document.getElementById('selectAllBtn').addEventListener('click', selectAllChapters);
+            document.getElementById('clearSelectionBtn').addEventListener('click', clearAllChapters);
+            document.getElementById('previewBtn').addEventListener('click', previewSelectedChapters);
+        }
+
         function setupChapterListeners() {
+            if (chapterListenersSetup) return;
+            chapterListenersSetup = true;
+
             const tree = document.getElementById('chapterTree');
 
             // Toggle expand/collapse
@@ -1192,12 +1230,7 @@
                 });
             });
 
-            // Select All / Clear buttons
-            document.getElementById('selectAllBtn').addEventListener('click', selectAllChapters);
-            document.getElementById('clearSelectionBtn').addEventListener('click', clearAllChapters);
-
-            // Preview button
-            document.getElementById('previewBtn').addEventListener('click', previewSelectedChapters);
+            // Note: Button listeners are set up once in setupButtonListeners()
         }
 
         function handleCheckboxChange(checkbox) {
@@ -1847,6 +1880,7 @@
                 updateLanguageButtons();
                 setSampleText('vi');
                 updateVoiceVisibility();
+                setupButtonListeners();
             } catch (err) {
                 console.error('[TTS] init failed:', err);
                 statusWrap.style.display = 'block';
