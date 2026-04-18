@@ -150,7 +150,8 @@ async def get_document_info(document_id: str):
         "expires_at": document.expires_at.isoformat(),
         "total_pages": document.total_pages,
         "total_chapters": document.total_chapters,
-        "extraction_progress": document.extraction_progress
+        "extraction_progress": document.extraction_progress,
+        "metadata": document.metadata  # Include metadata (contains chapters)
     }
 
 @router.get("/{document_id}/extract/stream")
@@ -280,13 +281,15 @@ async def get_document_structure(document_id: str):
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Note: Chapter storage retrieval will be added in next task
+    # Get chapters from document metadata
+    chapters = document.metadata.get("chapters", [])
+
     return {
         "document_id": document_id,
         "status": document.status.value,
-        "total_chapters": document.total_chapters or 0,
+        "total_chapters": document.total_chapters or len(chapters),
         "extraction_progress": document.extraction_progress,
-        "chapters": []  # Will be populated from storage
+        "chapters": chapters
     }
 
 
