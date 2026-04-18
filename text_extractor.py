@@ -2,11 +2,14 @@
 import os
 import re
 import asyncio
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Callable, Optional, Dict
 from pathlib import Path
 from models import Chapter, FileType, ExtractionMethod
 import PyPDF2
 import pdfplumber
+
+# Progress callback type: (progress: float, message: str) -> None
+ProgressCallback = Callable[[float, str], None]
 
 # Configuration
 EXTRACTION_PAGE_BATCH = int(os.getenv("EXTRACTION_PAGE_BATCH", "20"))
@@ -275,3 +278,188 @@ async def extract_epub_text(document_id: str, file_path: str) -> AsyncGenerator[
 
     except Exception as e:
         raise RuntimeError(f"EPUB extraction failed: {e}")
+
+
+def extract_pdf_text_blocking(
+    document_id: str,
+    file_path: str,
+    progress_callback: Optional[ProgressCallback] = None
+) -> List[Dict]:
+    """
+    Blocking version of PDF extraction for use in worker threads.
+
+    Args:
+        document_id: Document ID
+        file_path: Path to PDF file
+        progress_callback: Optional callback for progress updates
+
+    Returns:
+        List of chapter dictionaries
+    """
+    try:
+        # Try pdfplumber first
+        with pdfplumber.open(file_path) as pdf:
+            total_pages = len(pdf.pages)
+            all_text = []
+
+            for page_num, page in enumerate(pdf.pages):
+                try:
+                    text = page.extract_text()
+                    if text:
+                        all_text.append(text)
+                except Exception:
+                    all_text.append("")
+
+                # Report progress
+                if progress_callback and total_pages > 0:
+                    progress = (page_num + 1) / total_pages
+                    message = f"Processing page {page_num + 1}/{total_pages}"
+                    progress_callback(progress, message)
+
+            full_text = '\n\n'.join(all_text)
+
+    except Exception as e:
+        # Fallback to PyPDF2
+        try:
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                total_pages = len(pdf_reader.pages)
+                all_text = []
+
+                for page_num in range(total_pages):
+                    try:
+                        page = pdf_reader.pages[page_num]
+                        text = page.extract_text()
+                        if text:
+                            all_text.append(text)
+                    except Exception:
+                        all_text.append("")
+
+                    if progress_callback and total_pages > 0:
+                        progress = (page_num + 1) / total_pages
+                        message = f"Processing page {page_num + 1}/{total_pages}"
+                        progress_callback(progress, message)
+
+                full_text = '\n\n'.join(all_text)
+
+        except Exception as e2:
+            raise RuntimeError(f"PDF extraction failed: {e2}")
+
+    # Detect chapters
+    chapters = _detect_chapters_in_text(full_text, document_id)
+
+    # Build result list
+    result = []
+    for chapter in chapters:
+        # Assess quality
+        chapter.quality_score = _assess_text_quality(chapter.full_text or "")
+        chapter.needs_ocr = chapter.quality_score < 0.5
+
+        # Estimate audio duration
+        if chapter.word_count > 0:
+            chapter.estimated_audio_duration = (chapter.word_count / 150) * 60
+
+        result.append({
+            "chapter_id": chapter.chapter_id,
+            "document_id": chapter.document_id,
+            "chapter_number": chapter.chapter_number,
+            "title": chapter.title,
+            "start_page": chapter.start_page,
+            "end_page": chapter.end_page,
+            "text_preview": chapter.text_preview[:200] if chapter.text_preview else "",
+            "full_text": chapter.full_text or "",
+            "word_count": chapter.word_count,
+            "estimated_audio_duration": chapter.estimated_audio_duration,
+            "quality_score": chapter.quality_score,
+            "needs_ocr": chapter.needs_ocr,
+            "extraction_method": chapter.extraction_method.value,
+            "language": chapter.language
+        })
+
+    return result
+
+
+def extract_epub_text_blocking(
+    document_id: str,
+    file_path: str,
+    progress_callback: Optional[ProgressCallback] = None
+) -> List[Dict]:
+    """
+    Blocking version of EPUB extraction for use in worker threads.
+
+    Args:
+        document_id: Document ID
+        file_path: Path to EPUB file
+        progress_callback: Optional callback for progress updates
+
+    Returns:
+        List of chapter dictionaries
+    """
+    try:
+        from ebooklib import epub
+
+        chapters = []
+        book = epub.read_epub(file_path)
+
+        # Get all items
+        all_items = list(book.get_items())
+        total_items = len(all_items)
+
+        for idx, item in enumerate(all_items):
+            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                # Extract text from HTML content
+                content = item.get_content()
+                # Simple text extraction (strip HTML tags)
+                text = re.sub(r'<[^>]+>', '\n', content.decode('utf-8', errors='ignore'))
+                text = ' '.join(text.split())
+
+                if text.strip():
+                    ch_num = len(chapters) + 1
+                    chapter = Chapter(
+                        chapter_id=f"{document_id}_ch_{ch_num}",
+                        document_id=document_id,
+                        chapter_number=ch_num,
+                        title=f"Section {ch_num}",
+                        text_preview=text[:200],
+                        full_text=text,
+                        word_count=len(text.split())
+                    )
+
+                    chapter.quality_score = _assess_text_quality(text)
+                    chapter.needs_ocr = chapter.quality_score < 0.5
+
+                    if chapter.word_count > 0:
+                        chapter.estimated_audio_duration = (chapter.word_count / 150) * 60
+
+                    chapters.append(chapter)
+
+            # Report progress
+            if progress_callback and total_items > 0:
+                progress = (idx + 1) / total_items
+                message = f"Processing section {idx + 1}/{total_items}"
+                progress_callback(progress, message)
+
+    except Exception as e:
+        raise RuntimeError(f"EPUB extraction failed: {e}")
+
+    # Build result list
+    result = []
+    for chapter in chapters:
+        result.append({
+            "chapter_id": chapter.chapter_id,
+            "document_id": chapter.document_id,
+            "chapter_number": chapter.chapter_number,
+            "title": chapter.title,
+            "start_page": chapter.start_page,
+            "end_page": chapter.end_page,
+            "text_preview": chapter.text_preview[:200] if chapter.text_preview else "",
+            "full_text": chapter.full_text or "",
+            "word_count": chapter.word_count,
+            "estimated_audio_duration": chapter.estimated_audio_duration,
+            "quality_score": chapter.quality_score,
+            "needs_ocr": chapter.needs_ocr,
+            "extraction_method": chapter.extraction_method.value,
+            "language": chapter.language
+        })
+
+    return result
