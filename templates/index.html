@@ -705,6 +705,114 @@
             text-align: center;
             color: #94a3b8;
         }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+        }
+
+        .toast {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            padding: 14px 18px;
+            min-width: 300px;
+            max-width: 400px;
+            pointer-events: auto;
+            animation: slideIn 0.3s ease-out;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .toast.success {
+            border-left: 4px solid #22c55e;
+        }
+
+        .toast.error {
+            border-left: 4px solid #ef4444;
+        }
+
+        .toast.info {
+            border-left: 4px solid #3b82f6;
+        }
+
+        .toast.removing {
+            animation: slideOut 0.3s ease-out forwards;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
+
+        .toast-content {
+            flex: 1;
+        }
+
+        .toast-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: #1e293b;
+        }
+
+        .toast-message {
+            font-size: 14px;
+            color: #64748b;
+        }
+
+        .toast-close {
+            background: none;
+            border: none;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .toast-close:hover {
+            color: #64748b;
+        }
+
+        /* Progress bar for toasts */
+        .toast-progress {
+            height: 3px;
+            background: #e2e8f0;
+            border-radius: 2px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+
+        .toast-progress-bar {
+            height: 100%;
+            background: #3b82f6;
+            transition: width 0.3s ease;
+        }
     </style>
 </head>
 <body>
@@ -883,6 +991,9 @@
         </div>
     </div>
 
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
     <script>
         const SAMPLE_TEXT = {
             vi: 'Ngày xửa ngày xưa, trong một khu rừng xanh thẳm, có một chú thỏ nhỏ rất thông minh và tốt bụng. Mỗi buổi sáng, chú thường chạy quanh hồ nước để chào những người bạn của mình.',
@@ -1039,19 +1150,15 @@
         }
 
         // Job-based extraction functions
+        // Track active extraction jobs with their toasts
+        const activeExtractions = new Map(); // docId -> { jobId, toast, filename }
+
         async function startExtractionWithJob(docId, filename) {
             const doc = queueState.documents.find(d => d.document_id === docId);
             if (!doc) return;
 
-            // Switch to upload tab and start extraction
-            switchTab('upload-document');
-
-            // Hide upload zone, show extraction
-            document.getElementById('uploadZone').classList.add('hidden');
-            document.getElementById('uploadProgress').classList.add('hidden');
-            document.getElementById('extractionProgress').classList.remove('hidden');
-
-            uploadState.documentId = docId;
+            // Don't switch tabs - let user stay where they are
+            // Don't hide upload zone - keep it available
 
             // Submit job
             try {
@@ -1065,11 +1172,30 @@
                 }
 
                 const data = await response.json();
+
+                // Show toast notification
+                const toast = showToast({
+                    variant: 'info',
+                    title: 'Đang trích xuất...',
+                    message: `${filename}: Đang xử lý`,
+                    duration: 0  // Don't auto-hide
+                });
+
+                // Track this extraction
+                activeExtractions.set(docId, {
+                    jobId: data.job_id,
+                    toast: toast,
+                    filename: filename
+                });
+
                 pollJobStatus(data.job_id, docId, filename);
             } catch (error) {
                 console.error('Job submission error:', error);
-                showExtractionError(error.message);
-                resetUploadUI();
+                showToast({
+                    variant: 'error',
+                    title: 'Lỗi',
+                    message: error.message
+                });
             }
         }
 
@@ -1080,26 +1206,55 @@
 
                     if (!response.ok) {
                         clearInterval(interval);
-                        showExtractionError('Failed to get job status');
+                        const extraction = activeExtractions.get(docId);
+                        if (extraction) {
+                            hideToast(extraction.toast);
+                            activeExtractions.delete(docId);
+                        }
+                        showToast({
+                            variant: 'error',
+                            title: 'Lỗi',
+                            message: 'Failed to get job status'
+                        });
                         return;
                     }
 
                     const status = await response.json();
 
-                    // Update progress UI
-                    updateExtractionProgress({
-                        current: Math.floor(status.progress * 100),
-                        total: 100,
-                        message: status.message
-                    });
+                    // Update toast with progress
+                    const extraction = activeExtractions.get(docId);
+                    if (extraction && extraction.toast) {
+                        const progressBar = extraction.toast.querySelector('.toast-progress-bar');
+                        const messageEl = extraction.toast.querySelector('.toast-message');
+                        if (progressBar) {
+                            progressBar.style.width = `${status.progress * 100}%`;
+                        }
+                        if (messageEl) {
+                            messageEl.textContent = `${filename}: ${status.message || Math.floor(status.progress * 100) + '%'}`;
+                        }
+                    }
+
+                    // Refresh queue periodically to show updated status
+                    if (Math.random() < 0.2) {  // 20% chance per poll
+                        loadQueue();
+                    }
 
                     if (status.status === 'completed') {
                         clearInterval(interval);
-                        loadJobResult(jobId, docId, filename);
+                        await loadJobResult(jobId, docId, filename);
                     } else if (status.status === 'failed') {
                         clearInterval(interval);
-                        showExtractionError(status.error || 'Extraction failed');
-                        resetUploadUI();
+                        const extraction = activeExtractions.get(docId);
+                        if (extraction) {
+                            hideToast(extraction.toast);
+                            activeExtractions.delete(docId);
+                        }
+                        showToast({
+                            variant: 'error',
+                            title: 'Trích xuất thất bại',
+                            message: `${filename}: ${status.error || 'Unknown error'}`
+                        });
+                        await loadQueue();
                     }
                 } catch (error) {
                     clearInterval(interval);
@@ -1109,6 +1264,8 @@
         }
 
         async function loadJobResult(jobId, docId, filename) {
+            const extraction = activeExtractions.get(docId);
+
             try {
                 const response = await fetch(`/document/job/${jobId}/result`);
 
@@ -1118,36 +1275,45 @@
 
                 const data = await response.json();
 
-                // Convert result to chapter format
-                uploadState.chapters = data.chapters.map(ch => ({
-                    chapter_id: ch.chapter_id,
-                    chapter_number: ch.chapter_number,
-                    title: ch.title,
-                    word_count: ch.word_count,
-                    text_preview: ch.text_preview
-                }));
-
                 // Update local document state from backend
                 const docResponse = await fetch(`/document/${docId}`);
                 if (docResponse.ok) {
                     const docData = await docResponse.json();
                     const doc = queueState.documents.find(d => d.document_id === docId);
                     if (doc) {
-                        // Update from backend response to ensure consistency
                         doc.status = docData.status;
                         doc.total_chapters = docData.total_chapters || data.chapters.length;
                         doc.extraction_progress = docData.extraction_progress || 1.0;
                     }
                 }
 
-                extractionComplete({ total_chapters: data.chapters.length }, filename);
+                // Hide progress toast, show success toast
+                if (extraction) {
+                    hideToast(extraction.toast);
+                    activeExtractions.delete(docId);
+                }
+
+                showToast({
+                    variant: 'success',
+                    title: 'Hoàn thành!',
+                    message: `${filename}: ${data.chapters.length} chương đã trích xuất`,
+                    duration: 3000
+                });
 
                 // Refresh queue to update status
                 await loadQueue();
             } catch (error) {
                 console.error('Load result error:', error);
-                showExtractionError(error.message);
-                resetUploadUI();
+                if (extraction) {
+                    hideToast(extraction.toast);
+                    activeExtractions.delete(docId);
+                }
+                showToast({
+                    variant: 'error',
+                    title: 'Lỗi',
+                    message: error.message
+                });
+                await loadQueue();
             }
         }
 
@@ -1170,11 +1336,10 @@
                 await startExtractionWithJob(docId, doc.filename);
             } catch (error) {
                 console.error('Retry error:', error);
-                showModal({
+                showToast({
                     variant: 'error',
-                    title: 'Retry Failed',
-                    message: error.message,
-                    actions: [{ label: 'OK', primary: true }]
+                    title: 'Thử lại thất bại',
+                    message: error.message
                 });
             }
         }
@@ -1301,6 +1466,57 @@
 
         function closeModal() {
             document.getElementById('modalOverlay').classList.add('hidden');
+        }
+
+        // Toast notification functions
+        function showToast(options) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${options.variant || 'info'}`;
+
+            const title = options.title || '';
+            const message = options.message || '';
+            const duration = options.duration || 4000;
+
+            toast.innerHTML = `
+                <div class="toast-content">
+                    ${title ? `<div class="toast-title">${escapeHtml(title)}</div>` : ''}
+                    ${message ? `<div class="toast-message">${escapeHtml(message)}</div>` : ''}
+                    ${options.showProgress !== false ? `
+                        <div class="toast-progress">
+                            <div class="toast-progress-bar" style="width: 0%"></div>
+                        </div>
+                    ` : ''}
+                </div>
+                <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+            `;
+
+            container.appendChild(toast);
+
+            // Animate progress bar if present
+            if (options.showProgress !== false) {
+                const progressBar = toast.querySelector('.toast-progress-bar');
+                setTimeout(() => {
+                    progressBar.style.width = '100%';
+                }, 50);
+            }
+
+            // Auto-remove after duration
+            if (duration > 0) {
+                setTimeout(() => {
+                    toast.classList.add('removing');
+                    setTimeout(() => toast.remove(), 300);
+                }, duration);
+            }
+
+            return toast;
+        }
+
+        function hideToast(toast) {
+            if (toast) {
+                toast.classList.add('removing');
+                setTimeout(() => toast.remove(), 300);
+            }
         }
 
         // Escape key handler to close modal
