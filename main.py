@@ -1277,7 +1277,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
             "status": "queued",
             "progress": 0,
             "total": len(chunk_preview),
-            "text_hash": md5_short(text),
+            "text_hash": md5_short(text_to_process),
             "voice": voice,
             "engine": engine,
             "language": language,
@@ -1661,11 +1661,35 @@ async def health():
 
 @app.on_event("startup")
 async def startup_event():
-    """Register background cleanup task on startup."""
+    """Register background cleanup task on startup and recover orphan jobs."""
     from fastapi import BackgroundTasks
     background_tasks = BackgroundTasks()
     register_cleanup_task(background_tasks)
     logger.info("Document upload cleanup task registered")
+
+    # Recover orphan jobs from previous run
+    from job_queue import recover_orphan_jobs
+    recovered = recover_orphan_jobs()
+    if recovered > 0:
+        logger.info(f"Recovered {recovered} orphan extraction jobs")
+
+    # Start periodic cleanup
+    asyncio.create_task(periodic_job_cleanup())
+
+
+async def periodic_job_cleanup():
+    """Background task to clean up old job files."""
+    while True:
+        try:
+            from job_queue import cleanup_old_jobs
+            deleted = cleanup_old_jobs()
+            if deleted > 0:
+                logger.info(f"Cleaned up {deleted} old job files")
+        except Exception as e:
+            logger.error(f"Job cleanup error: {e}")
+
+        # Run every hour
+        await asyncio.sleep(3600)
 
 
 # ---------------------------------------------------------------------------
