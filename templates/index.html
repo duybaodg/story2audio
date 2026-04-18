@@ -1055,7 +1055,7 @@
 
             // Submit job
             try {
-                const response = await fetch(`/job/${docId}/extract`, {
+                const response = await fetch(`/document/job/${docId}/extract`, {
                     method: 'POST'
                 });
 
@@ -1076,7 +1076,7 @@
         function pollJobStatus(jobId, docId, filename) {
             const interval = setInterval(async () => {
                 try {
-                    const response = await fetch(`/job/${jobId}/status`);
+                    const response = await fetch(`/document/job/${jobId}/status`);
 
                     if (!response.ok) {
                         clearInterval(interval);
@@ -1110,7 +1110,7 @@
 
         async function loadJobResult(jobId, docId, filename) {
             try {
-                const response = await fetch(`/job/${jobId}/result`);
+                const response = await fetch(`/document/job/${jobId}/result`);
 
                 if (!response.ok) {
                     throw new Error('Failed to get job result');
@@ -1154,7 +1154,7 @@
             if (!doc) return;
 
             try {
-                const response = await fetch(`/job/${docId}/retry`, {
+                const response = await fetch(`/document/job/${docId}/retry`, {
                     method: 'POST'
                 });
 
