@@ -1127,25 +1127,27 @@
                     text_preview: ch.text_preview
                 }));
 
-                // Also update document metadata
+                // Update local document state from backend
                 const docResponse = await fetch(`/document/${docId}`);
                 if (docResponse.ok) {
                     const docData = await docResponse.json();
-                    // Store chapters in document metadata for content retrieval
                     const doc = queueState.documents.find(d => d.document_id === docId);
                     if (doc) {
-                        doc.total_chapters = data.chapters.length;
-                        doc.status = 'ready';
+                        // Update from backend response to ensure consistency
+                        doc.status = docData.status;
+                        doc.total_chapters = docData.total_chapters || data.chapters.length;
+                        doc.extraction_progress = docData.extraction_progress || 1.0;
                     }
                 }
 
                 extractionComplete({ total_chapters: data.chapters.length }, filename);
 
                 // Refresh queue to update status
-                loadQueue();
+                await loadQueue();
             } catch (error) {
                 console.error('Load result error:', error);
                 showExtractionError(error.message);
+                resetUploadUI();
             }
         }
 

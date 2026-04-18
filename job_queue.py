@@ -140,11 +140,29 @@ def _job_worker(job_id: str, document_id: str, file_path: str, file_type: str):
         job.completed_at = datetime.now(UTC)
         job.result = {"chapters": chapters}
 
+        # Update document status to READY
+        from file_processor import active_documents
+        from models import DocumentStatus
+        doc = active_documents.get(document_id)
+        if doc:
+            doc.status = DocumentStatus.READY
+            doc.total_chapters = len(chapters)
+            doc.extraction_progress = 1.0
+            # Store chapters in metadata for content retrieval
+            doc.metadata["chapters"] = chapters
+
     except Exception as e:
         job.status = JobStatus.FAILED
         job.error = str(e)
         job.message = f"Failed: {str(e)}"
         job.completed_at = datetime.now(UTC)
+
+        # Update document status to ERROR
+        from file_processor import active_documents
+        from models import DocumentStatus
+        doc = active_documents.get(document_id)
+        if doc:
+            doc.status = DocumentStatus.ERROR
 
     finally:
         _save_job(job)
