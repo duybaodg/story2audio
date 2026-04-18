@@ -11,10 +11,20 @@ from file_processor import (
     receive_chunk,
     complete_upload,
     get_document,
+    get_queue,
+    delete_document,
     active_sessions,
     active_documents
 )
 from text_extractor import extract_pdf_text, extract_epub_text
+from job_queue import (
+    submit_extraction_job,
+    get_job_status,
+    retry_job,
+    cancel_job,
+    ExtractionJob,
+    JobStatus
+)
 
 
 class ChapterContentRequest(BaseModel):
@@ -114,6 +124,13 @@ async def upload_complete(upload_id: str = Form(...)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.get("/queue")
+async def get_document_queue():
+    """
+    Get all documents in the upload queue.
+    """
+    return {"queue": await get_queue()}
+
 @router.get("/{document_id}")
 async def get_document_info(document_id: str):
     """
@@ -206,6 +223,21 @@ async def stream_extraction(document_id: str):
             document.total_chapters = len(progress_chapters)
             document.status = DocumentStatus.READY
             document.extraction_progress = 1.0
+
+            # Store chapters in metadata for content endpoint retrieval
+            document.metadata["chapters"] = [
+                {
+                    "chapter_id": ch.chapter_id,
+                    "chapter_number": ch.chapter_number,
+                    "title": ch.title,
+                    "word_count": ch.word_count,
+                    "full_text": getattr(ch, 'full_text', ch.text_preview),
+                    "quality_score": ch.quality_score,
+                    "needs_ocr": ch.needs_ocr
+                }
+                for ch in progress_chapters
+            ]
+
             active_documents[document_id] = document
 
             # Send completion event
@@ -256,6 +288,17 @@ async def get_document_structure(document_id: str):
         "extraction_progress": document.extraction_progress,
         "chapters": []  # Will be populated from storage
     }
+
+
+@router.delete("/{document_id}")
+async def delete_document_from_queue(document_id: str):
+    """
+    Delete a document from the queue.
+    """
+    success = await delete_document(document_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"message": "Document deleted"}
 
 
 @router.post("/{document_id}/content")
@@ -326,3 +369,111 @@ async def get_document_content(document_id: str, request: ChapterContentRequest)
         "skipped_chapters": skipped_chapters,
         "missing_chapter_ids": list(missing_ids)
     }
+
+
+# Job Queue endpoints
+
+@router.post("/job/{document_id}/extract")
+async def submit_job_extraction(document_id: str):
+    """
+    Submit a document extraction job to the worker queue.
+
+    Returns immediately with job_id for status polling.
+    """
+    document = await get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if document.status == DocumentStatus.EXTRACTING:
+        raise HTTPException(status_code=400, detail="Extraction already in progress")
+
+    if document.status == DocumentStatus.READY:
+        # Already extracted - return completed status immediately
+        return {
+            "job_id": document.document_id,
+            "document_id": document_id,
+            "status": "completed",
+            "message": "Document already extracted"
+        }
+
+    # Submit job
+    job_id = await submit_extraction_job(
+        document_id,
+        document.file_path,
+        document.file_type.value
+    )
+
+    # Update document status
+    document.status = DocumentStatus.EXTRACTING
+    active_documents[document_id] = document
+
+    return {
+        "job_id": job_id,
+        "document_id": document_id,
+        "status": "pending",
+        "message": "Job submitted to queue"
+    }
+
+
+@router.get("/job/{job_id}/status")
+async def get_job_status_endpoint(job_id: str):
+    """
+    Get the status of an extraction job.
+    """
+    job = get_job_status(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return job.model_dump()
+
+
+@router.get("/job/{job_id}/result")
+async def get_job_result(job_id: str):
+    """
+    Get the extraction result from a completed job.
+    """
+    job = get_job_status(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job not completed. Current status: {job.status.value}"
+        )
+
+    return job.result
+
+
+@router.post("/job/{job_id}/retry")
+async def retry_job_endpoint(job_id: str):
+    """
+    Retry a failed extraction job.
+    """
+    new_job_id = await retry_job(job_id)
+    if not new_job_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Job not found or not failed. Only failed jobs can be retried."
+        )
+
+    return {
+        "old_job_id": job_id,
+        "new_job_id": new_job_id,
+        "message": "Job resubmitted to queue"
+    }
+
+
+@router.delete("/job/{job_id}")
+async def cancel_job_endpoint(job_id: str):
+    """
+    Cancel a pending or running job.
+    """
+    success = cancel_job(job_id)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Job not found, already completed, or cannot be cancelled"
+        )
+
+    return {"message": "Job cancelled"}
