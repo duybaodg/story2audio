@@ -1375,11 +1375,10 @@
             const data = await response.json();
 
             if (data.status !== 'ready') {
-                showModal({
+                showToast({
                     variant: 'error',
                     title: 'Chưa Sẵn Sàng',
-                    message: 'Tài liệu chưa trích xuất xong.',
-                    actions: [{ label: 'OK', primary: true }]
+                    message: 'Tài liệu chưa trích xuất xong.'
                 });
                 return;
             }
@@ -1394,19 +1393,212 @@
             uploadState.documentId = docId;
             uploadState.chapters = docData.metadata?.chapters || [];
 
-            // Switch to upload tab and show chapters
+            // Show chapters in a modal instead of hiding upload zone
+            showChapterModal(doc.filename, uploadState.chapters);
+        }
+
+        // New function to show chapters in a modal
+        function showChapterModal(filename, chapters) {
+            const overlay = document.getElementById('modalOverlay');
+            const icon = document.getElementById('modalIcon');
+            const title = document.getElementById('modalTitle');
+            const body = document.getElementById('modalBody');
+            const actions = document.getElementById('modalActions');
+            const card = overlay.querySelector('.modal-card');
+
+            // Set modal content for chapters
+            icon.textContent = '📄';
+            title.textContent = filename;
+
+            // Build chapter list HTML
+            let chaptersHtml = `
+                <div style="max-height: 400px; overflow-y: auto; padding: 8px 0;">
+                    <div style="margin-bottom: 12px; color: #64748b;">
+                        ${chapters.length} chương đã trích xuất
+                    </div>
+                    <div class="chapter-tree-modal">
+            `;
+
+            chapters.forEach((ch, index) => {
+                const chapterNum = ch.chapter_number || index + 1;
+                const wordCount = ch.word_count || 0;
+                chaptersHtml += `
+                    <div class="chapter-item-modal">
+                        <label class="chapter-label">
+                            <input type="checkbox" class="chapter-checkbox" data-index="${index}"
+                                   value="${ch.chapter_id}" data-word-count="${wordCount}">
+                            <span class="chapter-title">${escapeHtml(ch.title || `Chương ${chapterNum}`)}</span>
+                        </label>
+                        <span class="chapter-wordcount">${wordCount.toLocaleString()} từ</span>
+                    </div>
+                `;
+            });
+
+            chaptersHtml += `
+                    </div>
+                </div>
+                <div class="selection-summary" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
+                    <span class="summary-text" id="modalSummaryText">0 chương đã chọn</span>
+                </div>
+            `;
+
+            body.innerHTML = chaptersHtml;
+
+            // Add action buttons
+            actions.innerHTML = `
+                <button class="modal-btn" onclick="closeModal()">Đóng</button>
+                <button class="modal-btn primary" id="modalSelectAllBtn">Chọn tất cả</button>
+                <button class="modal-btn primary" id="modalConvertBtn" disabled>Chuyển đổi →</button>
+            `;
+
+            // Setup checkbox handlers
+            const checkboxes = body.querySelectorAll('.chapter-checkbox');
+            const summaryText = document.getElementById('modalSummaryText');
+            const convertBtn = document.getElementById('modalConvertBtn');
+            const selectAllBtn = document.getElementById('modalSelectAllBtn');
+
+            function updateSummary() {
+                const selected = body.querySelectorAll('.chapter-checkbox:checked');
+                const totalWords = Array.from(selected).reduce((sum, cb) => {
+                    return sum + parseInt(cb.dataset.wordCount || 0);
+                }, 0);
+                summaryText.textContent = `${selected.length} chương đã chọn · ${totalWords.toLocaleString()} từ`;
+                convertBtn.disabled = selected.length === 0;
+            }
+
+            checkboxes.forEach(cb => {
+                cb.addEventListener('change', updateSummary);
+            });
+
+            selectAllBtn.addEventListener('click', () => {
+                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                checkboxes.forEach(cb => cb.checked = !allChecked);
+                updateSummary();
+                selectAllBtn.textContent = allChecked ? 'Chọn tất cả' : 'Bỏ chọn';
+            });
+
+            convertBtn.addEventListener('click', () => {
+                const selected = Array.from(body.querySelectorAll('.chapter-checkbox:checked'));
+                if (selected.length === 0) return;
+
+                const selectedChapters = selected.map(cb => {
+                    const idx = parseInt(cb.dataset.index);
+                    return chapters[idx];
+                });
+
+                closeModal();
+                startConversionFromChapters(selectedChapters, filename);
+            });
+
+            // Add modal-specific styles
+            card.style.maxWidth = '500px';
+
+            overlay.classList.remove('hidden');
+
+            // Add CSS for modal chapter tree
+            if (!document.getElementById('modalChapterStyles')) {
+                const style = document.createElement('style');
+                style.id = 'modalChapterStyles';
+                style.textContent = `
+                    .chapter-tree-modal {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 4px;
+                    }
+                    .chapter-item-modal {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        padding: 8px 12px;
+                        border-radius: 8px;
+                        background: #f8fafc;
+                    }
+                    .chapter-item-modal:hover {
+                        background: #f1f5f9;
+                    }
+                    .chapter-label {
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        cursor: pointer;
+                        flex: 1;
+                    }
+                    .chapter-checkbox {
+                        width: 18px;
+                        height: 18px;
+                        cursor: pointer;
+                    }
+                    .chapter-wordcount {
+                        font-size: 12px;
+                        color: #94a3b8;
+                    }
+                    .modal-btn {
+                        padding: 8px 16px;
+                        border-radius: 8px;
+                        border: 1px solid #e2e8f0;
+                        background: #fff;
+                        cursor: pointer;
+                        font-size: 14px;
+                    }
+                    .modal-btn.primary {
+                        background: #3b82f6;
+                        color: #fff;
+                        border-color: #3b82f6;
+                    }
+                    .modal-btn.primary:disabled {
+                        background: #94a3b8;
+                        border-color: #94a3b8;
+                        cursor: not-allowed;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+        }
+
+        // Function to start conversion from modal chapter selection
+        function startConversionFromChapters(chapters, filename) {
+            // Store selected chapters
+            uploadState.selectedChapters = chapters;
+
+            // Calculate total words
+            const totalWords = chapters.reduce((sum, ch) => sum + (ch.word_count || 0), 0);
+
+            // Update selection summary
+            document.getElementById('selectionSummary').classList.remove('hidden');
+            document.getElementById('summaryText').textContent =
+                `${chapters.length} chương đã chọn · ${totalWords.toLocaleString()} từ · ~${Math.ceil(totalWords / 150)} phút`;
+
+            // Enable preview button
+            document.getElementById('previewBtn').disabled = false;
+
+            // Show upload tab with chapters visible
             switchTab('upload-document');
-            document.getElementById('uploadZone').classList.add('hidden');
-            document.getElementById('uploadProgress').classList.add('hidden');
-            document.getElementById('extractionProgress').classList.add('hidden');
+
+            // Make sure chapter container is visible
             document.getElementById('chapterContainer').classList.remove('hidden');
+            document.getElementById('chapterContainer').style.display = 'block';
 
+            // Update document title
             document.getElementById('documentTitle').textContent =
-                `✓ ${doc.filename} — ${uploadState.chapters.length} chương`;
+                `✓ ${filename} — ${chapters.length} chương đã chọn`;
 
-            // Render chapters
+            // Render chapters in the main tree
             resetChapterState();
-            renderChapterTree(doc.filename);
+            chapters.forEach((ch, index) => {
+                const chIdx = uploadState.chapters.findIndex(c => c.chapter_id === ch.chapter_id);
+                if (chIdx >= 0) {
+                    uploadState.selectedChapterIds.add(ch.chapter_id);
+                    updateChapterCheckboxes();
+                }
+            });
+
+            // Show success toast
+            showToast({
+                variant: 'success',
+                title: 'Đã chọn chương',
+                message: `${chapters.length} chương đã chọn để chuyển đổi`,
+                duration: 2000
+            });
         }
 
         // Helper function to escape HTML (XSS prevention)
