@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, Future
 import threading
 
 from pydantic import BaseModel, Field
+from text_extractor import extract_pdf_text_blocking, extract_epub_text_blocking
 
 # Configuration
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "4"))
@@ -100,16 +101,13 @@ def _run_extraction_blocking(
 ) -> List[Dict]:
     """
     Blocking wrapper for extraction. Runs in worker thread.
-
-    This will be implemented by adding blocking functions to text_extractor.py.
-    For now, we'll create a stub that will be replaced.
     """
-    # TODO: Import and call blocking extraction from text_extractor
-    # For now, raise NotImplementedError
-    raise NotImplementedError(
-        "Blocking extraction not yet implemented. "
-        "See Task 4 for implementation."
-    )
+    if file_type == "pdf":
+        return extract_pdf_text_blocking(document_id, file_path, progress_callback)
+    elif file_type == "epub":
+        return extract_epub_text_blocking(document_id, file_path, progress_callback)
+    else:
+        raise ValueError(f"Unsupported file type: {file_type}")
 
 
 def _job_worker(job_id: str, document_id: str, file_path: str, file_type: str):
