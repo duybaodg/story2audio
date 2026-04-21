@@ -96,42 +96,80 @@ _generation_locks: Dict[str, asyncio.Lock] = {}
 # ---------------------------------------------------------------------------
 # Language & Voice Registry
 # ---------------------------------------------------------------------------
+
+def _load_vieneu_voices() -> List[Dict[str, str]]:
+    """Load VieNeu preset voices at startup. Returns empty list if not available."""
+    try:
+        from vieneu import Vieneu
+        tts = Vieneu()
+        available = tts.list_preset_voices()
+        voices = [
+            {"value": "vieneu:default", "label": "Mặc định [VieNeu]", "engine": "vieneu"}
+        ]
+        for desc, name in available:
+            voices.append({
+                "value": f"vieneu:{name}",
+                "label": f"{desc} [VieNeu]",
+                "engine": "vieneu"
+            })
+        return voices
+    except Exception:
+        # VieNeu not installed or not available yet
+        return []
+
+
+# Load VieNeu voices at startup (lazy load)
+_VIENEU_VOICES: List[Dict[str, str]] = []
+
 EDGE_VOICES: Dict[str, List[Dict[str, str]]] = {
     "vi": [
-        {"value": "vi-VN-HoaiMyNeural", "label": "Hoài Mỹ (Nữ)"},
-        {"value": "vi-VN-NamMinhNeural", "label": "Nam Minh (Nam)"},
+        {"value": "vi-VN-HoaiMyNeural", "label": "Hoài Mỹ (Nữ) [Edge TTS]", "engine": "edge"},
+        {"value": "vi-VN-NamMinhNeural", "label": "Nam Minh (Nam) [Edge TTS]", "engine": "edge"},
     ],
     "en": [
-        {"value": "en-US-AriaNeural", "label": "Aria (Female, US)"},
-        {"value": "en-US-GuyNeural", "label": "Guy (Male, US)"},
-        {"value": "en-US-JennyNeural", "label": "Jenny (Female, US)"},
-        {"value": "en-GB-SoniaNeural", "label": "Sonia (Female, UK)"},
-        {"value": "en-GB-RyanNeural", "label": "Ryan (Male, UK)"},
-        {"value": "en-AU-NatashaNeural", "label": "Natasha (Female, AU)"},
+        {"value": "en-US-AriaNeural", "label": "Aria (Female, US) [Edge TTS]", "engine": "edge"},
+        {"value": "en-US-GuyNeural", "label": "Guy (Male, US) [Edge TTS]", "engine": "edge"},
+        {"value": "en-US-JennyNeural", "label": "Jenny (Female, US) [Edge TTS]", "engine": "edge"},
+        {"value": "en-GB-SoniaNeural", "label": "Sonia (Female, UK) [Edge TTS]", "engine": "edge"},
+        {"value": "en-GB-RyanNeural", "label": "Ryan (Male, UK) [Edge TTS]", "engine": "edge"},
+        {"value": "en-AU-NatashaNeural", "label": "Natasha (Female, AU) [Edge TTS]", "engine": "edge"},
     ],
     "ja": [
-        {"value": "ja-JP-NanamiNeural", "label": "Nanami (女性)"},
-        {"value": "ja-JP-KeitaNeural", "label": "Keita (男性)"},
+        {"value": "ja-JP-NanamiNeural", "label": "Nanami (女性) [Edge TTS]", "engine": "edge"},
+        {"value": "ja-JP-KeitaNeural", "label": "Keita (男性) [Edge TTS]", "engine": "edge"},
     ],
     "zh": [
-        {"value": "zh-CN-XiaoxiaoNeural", "label": "晓晓 (女, 普通话)"},
-        {"value": "zh-CN-YunxiNeural", "label": "云希 (男, 普通话)"},
-        {"value": "zh-TW-HsiaoChenNeural", "label": "曉臻 (女, 台灣)"},
+        {"value": "zh-CN-XiaoxiaoNeural", "label": "晓晓 (女, 普通话) [Edge TTS]", "engine": "edge"},
+        {"value": "zh-CN-YunxiNeural", "label": "云希 (男, 普通话) [Edge TTS]", "engine": "edge"},
+        {"value": "zh-TW-HsiaoChenNeural", "label": "曉臻 (女, 台灣) [Edge TTS]", "engine": "edge"},
     ],
     "ko": [
-        {"value": "ko-KR-SunHiNeural", "label": "선히 (여성)"},
-        {"value": "ko-KR-InJoonNeural", "label": "인준 (남성)"},
+        {"value": "ko-KR-SunHiNeural", "label": "선히 (여성) [Edge TTS]", "engine": "edge"},
+        {"value": "ko-KR-InJoonNeural", "label": "인준 (남성) [Edge TTS]", "engine": "edge"},
     ],
     "fr": [
-        {"value": "fr-FR-DeniseNeural", "label": "Denise (Femme, FR)"},
-        {"value": "fr-FR-HenriNeural", "label": "Henri (Homme, FR)"},
-        {"value": "fr-CA-SylvieNeural", "label": "Sylvie (Femme, CA)"},
+        {"value": "fr-FR-DeniseNeural", "label": "Denise (Femme, FR) [Edge TTS]", "engine": "edge"},
+        {"value": "fr-FR-HenriNeural", "label": "Henri (Homme, FR) [Edge TTS]", "engine": "edge"},
+        {"value": "fr-CA-SylvieNeural", "label": "Sylvie (Femme, CA) [Edge TTS]", "engine": "edge"},
     ],
     "de": [
-        {"value": "de-DE-KatjaNeural", "label": "Katja (Weiblich)"},
-        {"value": "de-DE-ConradNeural", "label": "Conrad (Männlich)"},
+        {"value": "de-DE-KatjaNeural", "label": "Katja (Weiblich) [Edge TTS]", "engine": "edge"},
+        {"value": "de-DE-ConradNeural", "label": "Conrad (Männlich) [Edge TTS]", "engine": "edge"},
     ],
 }
+
+
+def get_all_voices() -> Dict[str, List[Dict[str, str]]]:
+    """Get all voices including VieNeu voices (loaded once)."""
+    global _VIENEU_VOICES
+    if not _VIENEU_VOICES:
+        _VIENEU_VOICES = _load_vieneu_voices()
+        # Add VieNeu voices to Vietnamese
+        if _VIENEU_VOICES:
+            if "vi" not in EDGE_VOICES:
+                EDGE_VOICES["vi"] = []
+            EDGE_VOICES["vi"].extend(_VIENEU_VOICES)
+    return EDGE_VOICES
 
 GTTS_LANG_MAP: Dict[str, str] = {
     "vi": "vi",
@@ -656,16 +694,33 @@ def validate_language(language: str) -> str:
 
 def validate_engine(engine: str) -> str:
     engine = (engine or "edge").lower().strip()
-    if engine not in {"edge", "gtts"}:
+    if engine not in {"edge", "gtts", "vieneu"}:
         raise HTTPException(status_code=400, detail="Unsupported engine")
     return engine
+
+
+def get_engine_from_voice(voice: str, default_engine: str = "edge") -> str:
+    """Auto-detect engine from selected voice ID."""
+    if voice.startswith("vieneu:"):
+        return "vieneu"
+    return default_engine
 
 
 def validate_voice(language: str, voice: str, engine: str) -> str:
     if engine == "gtts":
         return ""
+    if engine == "vieneu":
+        # VieNeu voices are validated differently (preset lookup)
+        voice = (voice or "vieneu:default").strip()
+        if not voice.startswith("vieneu:"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"VieNeu voice must start with 'vieneu:'",
+            )
+        return voice
 
-    available = EDGE_VOICES.get(language, [])
+    all_voices = get_all_voices()
+    available = all_voices.get(language, [])
     if not available:
         raise HTTPException(
             status_code=400,
@@ -964,6 +1019,46 @@ async def edge_tts_to_audio_and_words(text: str, voice: str) -> Tuple[bytes, Lis
     return b"".join(audio_parts), words
 
 
+async def vieneu_tts_to_audio(text: str, voice: str) -> bytes:
+    """
+    Generate audio using VieNeu-TTS.
+    Returns: audio bytes (WAV format)
+
+    Voice format: "vieneu:default" or "vieneu:{preset_id}"
+    """
+    from vieneu import Vieneu
+
+    tts = Vieneu()
+
+    # Handle preset voices
+    preset_voice = None
+    if voice != "vieneu:default":
+        preset_id = voice.split(":", 1)[1]
+        try:
+            available = tts.list_preset_voices()
+            for desc, name in available:
+                if name == preset_id:
+                    preset_voice = tts.get_preset_voice(name)
+                    break
+        except Exception:
+            pass  # Fall back to default voice if preset lookup fails
+
+    # Run in thread pool since VieNeu is synchronous
+    loop = asyncio.get_running_loop()
+
+    def _generate():
+        try:
+            if preset_voice:
+                audio_spec = tts.infer(text=text, voice=preset_voice)
+            else:
+                audio_spec = tts.infer(text=text)
+            return tts.to_bytes(audio_spec)
+        except Exception as e:
+            raise RuntimeError(f"VieNeu TTS failed: {e}")
+
+    return await loop.run_in_executor(None, _generate)
+
+
 def gtts_to_bytes(text: str, lang: str = "vi") -> bytes:
     last_exc = None
     for attempt in range(3):
@@ -1007,13 +1102,14 @@ async def generate_chunks(
         cue_index = 0
 
         require_subtitles = engine == "edge"
+        subtitle_supported = engine == "edge"
         if is_cache_valid(cache_id, require_subtitles=require_subtitles):
             generation_status[cache_id] = {
                 "status": "completed",
                 "progress": 1,
                 "total": 1,
-                "subtitle_supported": engine == "edge",
-                "subtitle_ready": engine == "edge",
+                "subtitle_supported": subtitle_supported,
+                "subtitle_ready": subtitle_supported,
             }
             return
 
@@ -1073,7 +1169,10 @@ async def generate_chunks(
             for i, chunk_text in enumerate(chunks):
                 if engine == "edge":
                     audio, words = await edge_tts_to_audio_and_words(chunk_text, voice)
-                else:
+                elif engine == "vieneu":
+                    audio = await vieneu_tts_to_audio(chunk_text, voice)
+                    words = []  # VieNeu doesn't provide word-level timing
+                else:  # gtts
                     gtts_lang = GTTS_LANG_MAP.get(language, "en")
                     audio = await loop.run_in_executor(None, gtts_to_bytes, chunk_text, gtts_lang)
                     words = []
@@ -1099,6 +1198,13 @@ async def generate_chunks(
 
                 if engine == "edge":
                     new_cues = group_word_boundaries_to_cues(words, global_audio_sec, language)
+                    for cue in new_cues:
+                        cue_index += 1
+                        cue["index"] = cue_index
+
+                    cues_all.extend(new_cues)
+                    append_cues_jsonl(cache_id, new_cues)
+                    generation_status[cache_id]["subtitle_cues"] = len(cues_all)
                     for cue in new_cues:
                         cue_index += 1
                         cue["index"] = cue_index
@@ -1139,6 +1245,7 @@ async def generate_chunks(
                 write_text_atomic(get_srt_path(cache_id), cues_to_srt(cues_all))
                 write_text_atomic(get_vtt_path(cache_id), cues_to_vtt(cues_all))
                 subtitle_ready = True
+            # VieNeu and gTTS don't support subtitles
 
             save_cache_meta(
                 cache_id,
@@ -1211,7 +1318,7 @@ async def favicon():
 @app.get("/tts/voices")
 async def get_voices():
     return {
-        "voices": EDGE_VOICES,
+        "voices": get_all_voices(),
         "languages": SUPPORTED_LANGUAGES,
     }
 

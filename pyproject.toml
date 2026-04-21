@@ -15,6 +15,9 @@ dependencies = [
   "pdfplumber>=0.11.0",
   "ebooklib>=0.18",
   "python-magic>=0.4.27",  # For future file type validation (MVP: not yet used)
+  "python-multipart>=0.0.26",
+  # VieNeu-TTS for Vietnamese text-to-speech
+  "vieneu>=0.1.0"
 ]
 
 [dependency-groups]
