@@ -848,17 +848,10 @@
         <textarea id="textInput" placeholder="Nhập nội dung muốn chuyển thành audio..."></textarea>
 
         <div class="controls">
-            <div class="ctrl-group">
-                <label for="engine">Engine</label>
-                <select id="engine">
-                    <option value="edge">Edge-TTS (có subtitle live)</option>
-                    <option value="gtts">Google TTS (không subtitle)</option>
-                </select>
-            </div>
-
             <div class="ctrl-group" id="voiceGroup">
                 <label for="voice">Voice</label>
                 <select id="voice"></select>
+                <small style="color: #64748b; margin-top: 4px; display: block;" id="engineIndicator"></small>
             </div>
 
             <div class="ctrl-group">
@@ -878,7 +871,8 @@
         </div>
 
         <div class="tip">
-            • <b>Edge‑TTS</b>: phát audio live và có subtitle chạy theo thời gian.<br>
+            • <b>Edge-TTS</b>: phát audio live và có subtitle chạy theo thời gian.<br>
+            • <b>VieNeu-TTS</b>: chất lượng giọng Việt tự nhiên, hỗ trợ giọng Bắc/Nam, không subtitle.<br>
             • <b>Google TTS</b>: phát audio live ngay khi có dữ liệu, nhưng <b>không hỗ trợ subtitle</b>.
         </div>
 
@@ -1556,49 +1550,76 @@
         }
 
         // Function to start conversion from modal chapter selection
-        function startConversionFromChapters(chapters, filename) {
-            // Store selected chapters
-            uploadState.selectedChapters = chapters;
+        // Fetches content directly and switches to paste-text tab for conversion
+        async function startConversionFromChapters(chapters, filename) {
+            const chapterIds = chapters.map(ch => ch.chapter_id);
 
-            // Calculate total words
-            const totalWords = chapters.reduce((sum, ch) => sum + (ch.word_count || 0), 0);
+            // Store document source info for later reference
+            window.documentSource = {
+                documentId: uploadState.documentId,
+                filename: filename,
+                chapterIds: chapterIds,
+                chapterCount: chapters.length
+            };
 
-            // Update selection summary
-            document.getElementById('selectionSummary').classList.remove('hidden');
-            document.getElementById('summaryText').textContent =
-                `${chapters.length} chương đã chọn · ${totalWords.toLocaleString()} từ · ~${Math.ceil(totalWords / 150)} phút`;
+            try {
+                // Fetch content for selected chapters
+                const response = await fetch(`/document/${uploadState.documentId}/content`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chapter_ids: chapterIds
+                    })
+                });
 
-            // Enable preview button
-            document.getElementById('previewBtn').disabled = false;
-
-            // Show upload tab with chapters visible
-            switchTab('upload-document');
-
-            // Make sure chapter container is visible
-            document.getElementById('chapterContainer').classList.remove('hidden');
-            document.getElementById('chapterContainer').style.display = 'block';
-
-            // Update document title
-            document.getElementById('documentTitle').textContent =
-                `✓ ${filename} — ${chapters.length} chương đã chọn`;
-
-            // Render chapters in the main tree
-            resetChapterState();
-            chapters.forEach((ch, index) => {
-                const chIdx = uploadState.chapters.findIndex(c => c.chapter_id === ch.chapter_id);
-                if (chIdx >= 0) {
-                    uploadState.selectedChapterIds.add(ch.chapter_id);
-                    updateChapterCheckboxes();
+                if (!response.ok) {
+                    let errorMsg = 'Không thể tải nội dung';
+                    try {
+                        const errData = await response.json();
+                        errorMsg = errData.detail || errorMsg;
+                    } catch (e) {
+                        errorMsg = `Lỗi ${response.status}: ${response.statusText}`;
+                    }
+                    throw new Error(errorMsg);
                 }
-            });
 
-            // Show success toast
-            showToast({
-                variant: 'success',
-                title: 'Đã chọn chương',
-                message: `${chapters.length} chương đã chọn để chuyển đổi`,
-                duration: 2000
-            });
+                const data = await response.json();
+
+                // Switch to paste-text tab
+                switchTab('paste-text');
+
+                // Populate textarea
+                const textInput = document.getElementById('textInput');
+                if (textInput) {
+                    textInput.value = data.text || '';
+                }
+
+                // Show source indicator
+                showSourceIndicator({
+                    filename: filename,
+                    chapter_count: chapters.length
+                });
+
+                // Show success toast
+                const totalWords = chapters.reduce((sum, ch) => sum + (ch.word_count || 0), 0);
+                showToast({
+                    variant: 'success',
+                    title: 'Đã tải nội dung',
+                    message: `${chapters.length} chương · ${totalWords.toLocaleString()} từ · sẵn sàng chuyển đổi`,
+                    duration: 3000
+                });
+
+            } catch (error) {
+                console.error('Error loading chapter content:', error);
+                showModal({
+                    variant: 'error',
+                    title: 'Không thể tải nội dung',
+                    message: error.message,
+                    actions: [
+                        { label: 'OK', primary: true }
+                    ]
+                });
+            }
         }
 
         // Helper function to escape HTML (XSS prevention)
@@ -2282,7 +2303,8 @@
             if (uploadState.chapters.length === 0) {
                 showNoChaptersDialog();
             } else {
-                renderChapterTree(filename);
+                // Show chapter selection modal instead of inline tree
+                showChapterModal(filename, uploadState.chapters);
             }
 
             // Refresh queue to update document status
@@ -2639,9 +2661,9 @@
         }
 
         const textInput = document.getElementById('textInput');
-        const engineSel = document.getElementById('engine');
         const voiceSel = document.getElementById('voice');
         const voiceGroup = document.getElementById('voiceGroup');
+        const engineIndicator = document.getElementById('engineIndicator');
         const speedSelect = document.getElementById('speedSelect');
         const convertBtn = document.getElementById('convertBtn');
 
@@ -2703,11 +2725,28 @@
                 voiceSel.appendChild(opt);
             });
 
+            // Show engine indicator based on first voice (all voices for a language have same engines)
+            if (voices.length > 0) {
+                const firstVoice = voices[0];
+                const engine = firstVoice.engine || 'edge';
+                updateEngineIndicator(engine);
+            }
+
             updateVoiceVisibility();
         }
 
         function updateVoiceVisibility() {
-            voiceGroup.style.display = engineSel.value === 'gtts' ? 'none' : '';
+            // Voice dropdown is always visible now (all engines have voices)
+            voiceGroup.style.display = '';
+        }
+
+        function updateEngineIndicator(engine) {
+            const engineNames = {
+                'edge': 'Engine: Edge-TTS (có subtitle live)',
+                'vieneu': 'Engine: VieNeu-TTS (chất lượng cao, không subtitle)',
+                'gtts': 'Engine: Google TTS (không subtitle)'
+            };
+            engineIndicator.textContent = engineNames[engine] || engine;
         }
 
         function setStatus(text) {
@@ -3124,7 +3163,7 @@
             }, 1000);
         }
 
-        engineSel.addEventListener('change', updateVoiceVisibility);
+        // Engine is now auto-detected from voice selection
         speedSelect.addEventListener('change', applyPlaybackRate);
         player.addEventListener('play', applyPlaybackRate);
         player.addEventListener('canplay', applyPlaybackRate);
@@ -3138,8 +3177,10 @@
             }
 
             const text = textInput.value.trim();
-            const engine = engineSel.value;
             const voice = voiceSel.value;
+
+            // Auto-detect engine from voice (vieneu:* -> vieneu, others -> edge)
+            const detectedEngine = voice.startsWith('vieneu:') ? 'vieneu' : 'edge';
 
             if (!text) {
                 showModal({
@@ -3155,10 +3196,10 @@
 
             resetUI();
             convertBtn.disabled = true;
-            subtitleSupported = engine === 'edge';
+            subtitleSupported = detectedEngine === 'edge';
 
-            const body = { text, engine, language: currentLang };
-            if (engine === 'edge') body.voice = voice;
+            const body = { text, voice, language: currentLang };
+            // Engine is auto-detected from voice on backend
 
             let data;
             try {
