@@ -1022,11 +1022,14 @@ async def edge_tts_to_audio_and_words(text: str, voice: str) -> Tuple[bytes, Lis
 async def vieneu_tts_to_audio(text: str, voice: str) -> bytes:
     """
     Generate audio using VieNeu-TTS.
-    Returns: audio bytes (WAV format)
+    Returns: audio bytes (WAV format, 24kHz)
 
     Voice format: "vieneu:default" or "vieneu:{preset_id}"
     """
     from vieneu import Vieneu
+    import io
+    import wave
+    import tempfile
 
     tts = Vieneu()
 
@@ -1049,10 +1052,23 @@ async def vieneu_tts_to_audio(text: str, voice: str) -> bytes:
     def _generate():
         try:
             if preset_voice:
-                audio_spec = tts.infer(text=text, voice=preset_voice)
+                audio_array = tts.infer(text=text, voice=preset_voice)
             else:
-                audio_spec = tts.infer(text=text)
-            return tts.to_bytes(audio_spec)
+                audio_array = tts.infer(text=text)
+
+            # Convert numpy array to WAV bytes
+            # audio_array is int16 PCM at 24kHz
+            sample_rate = 24000  # VieNeu uses 24kHz
+
+            # Create WAV file in memory
+            with io.BytesIO() as wav_buffer:
+                with wave.open(wav_buffer, 'wb') as wav_file:
+                    wav_file.setnchannels(1)  # Mono
+                    wav_file.setsampwidth(2)  # 2 bytes per sample (int16)
+                    wav_file.setframerate(sample_rate)
+                    wav_file.writeframes(audio_array.tobytes())
+                return wav_buffer.getvalue()
+
         except Exception as e:
             raise RuntimeError(f"VieNeu TTS failed: {e}")
 
@@ -1340,9 +1356,14 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
     if not text_to_process:
         raise HTTPException(status_code=400, detail="Text must not be empty")
 
-    engine = validate_engine(request.engine)
     language = validate_language(request.language)
-    voice = validate_voice(language, request.voice, engine)
+
+    # Auto-detect engine from voice (e.g., "vieneu:default" -> "vieneu")
+    voice = (request.voice or "").strip()
+    detected_engine = get_engine_from_voice(voice)
+    engine = validate_engine(detected_engine if detected_engine != "edge" else request.engine)
+
+    voice = validate_voice(language, voice, engine)
 
     cache_id = get_cache_id(text_to_process, voice, engine, language)
     require_subtitles = engine == "edge"
