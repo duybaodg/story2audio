@@ -10,10 +10,20 @@ services:
     environment:
       TZ: Asia/Tokyo
       PYTHONUNBUFFERED: "1"
-    expose:
-      - "8000"
+      PYTHONWARNINGS: "ignore::SyntaxWarning"  # Suppress pydub library warnings
+      HF_HOME: /app/.cache/huggingface
+      DOCUMENT_STORAGE_PATH: /app/documents
+      # Configure VieNeu parallel processing workers (default: 1 for sequential processing)
+      VIENEU_MAX_WORKERS: "1"
+      # Hugging Face token for faster model downloads (optional)
+      # Get free token at: https://huggingface.co/settings/tokens
+      HF_TOKEN: "${HF_TOKEN:-}"
+    ports:
+      - "8000:8000"
     volumes:
       - story2audio_cache:/app/audio_cache
+      - story2audio_documents:/app/documents
+      - story2audio_models:/app/.cache/huggingface
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"]
       interval: 30s
@@ -23,3 +33,5 @@ services:
 
 volumes:
   story2audio_cache:
+  story2audio_documents:
+  story2audio_models:
