@@ -406,7 +406,7 @@ def extract_epub_text_blocking(
         total_items = len(all_items)
 
         for idx, item in enumerate(all_items):
-            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+            if item.get_type() == 9:  # ebooklib.ITEM_DOCUMENT
                 # Extract text from HTML content
                 content = item.get_content()
                 # Simple text extraction (strip HTML tags)
