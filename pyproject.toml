@@ -17,7 +17,13 @@ dependencies = [
   "python-magic>=0.4.27",  # For future file type validation (MVP: not yet used)
   "python-multipart>=0.0.26",
   # VieNeu-TTS for Vietnamese text-to-speech
-  "vieneu>=0.1.0"
+  "vieneu>=0.1.0",
+  # Audio quality enhancements
+  "pydub>=0.25.1",
+  # OCR retry for failed extractions
+  "pytesseract>=0.3.10",
+  "pdf2image>=1.16.0",
+  "Pillow>=9.0.0"
 ]
 
 [dependency-groups]
