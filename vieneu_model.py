@@ -15,11 +15,21 @@ Key features:
 import logging
 import os
 import threading
+import json
 from threading import Lock
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from contextlib import contextmanager
 
 logger = logging.getLogger("story2audio")
+
+# Path to local voices.json
+_VIENEU_VOICES_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "models",
+    "vieneu",
+    "assets",
+    "voices.json"
+)
 
 # Global pool state
 _model_pool: List[Tuple["Vieneu", Lock]] = []  # (model, lock) tuples
@@ -187,3 +197,72 @@ def reset_model_pool() -> None:
         _model_pool = []
         _warmed_up = False
         logger.info("VieNeu model pool reset")
+
+
+def get_preset_voices_from_file() -> List[Tuple[str, str]]:
+    """
+    Load preset voices from local voices.json file.
+
+    Returns list of (description, voice_id) tuples for all 6 preset voices:
+    - Binh (nam miền Bắc) - default
+    - Tuyen (nam miền Bắc)
+    - Vinh (nam miền Nam)
+    - Doan (nữ miền Nam)
+    - Ly (nữ miền Bắc)
+    - Ngoc (nữ miền Bắc)
+
+    Falls back to package's list_preset_voices() if local file not found.
+    """
+    # Try to load from local voices.json first
+    if os.path.exists(_VIENEU_VOICES_PATH):
+        try:
+            with open(_VIENEU_VOICES_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            presets = data.get('presets', {})
+            voices = []
+
+            for voice_id, voice_data in presets.items():
+                description = voice_data.get('description', voice_id)
+                voices.append((description, voice_id))
+
+            logger.info(f"Loaded {len(voices)} preset voices from local file")
+            return voices
+
+        except Exception as e:
+            logger.warning(f"Failed to load local voices.json: {e}")
+
+    # Fallback to package's preset voices
+    try:
+        from vieneu import Vieneu
+        tts = Vieneu()
+        voices = tts.list_preset_voices()
+        logger.info(f"Loaded {len(voices)} preset voices from package")
+        return voices
+    except Exception as e:
+        logger.error(f"Failed to load preset voices: {e}")
+        return []
+
+
+def get_voice_description(voice_id: str) -> str:
+    """
+    Get human-readable description for a voice ID.
+
+    Args:
+        voice_id: Voice ID (e.g., "Binh", "Tuyen", etc.)
+
+    Returns:
+        Human-readable description or the voice_id if not found.
+    """
+    if os.path.exists(_VIENEU_VOICES_PATH):
+        try:
+            with open(_VIENEU_VOICES_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            presets = data.get('presets', {})
+            if voice_id in presets:
+                return presets[voice_id].get('description', voice_id)
+        except Exception:
+            pass
+
+    return voice_id
