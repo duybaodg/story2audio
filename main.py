@@ -8,6 +8,8 @@ import logging
 import hashlib
 import asyncio
 import unicodedata
+import threading
+import traceback
 from datetime import timedelta
 from typing import List, Dict, AsyncGenerator, Optional, Tuple, Union
 
@@ -21,6 +23,13 @@ from gtts import gTTS
 from dotenv import load_dotenv
 from file_processor import register_cleanup_task
 from document_api import router as document_router
+
+# Audio quality imports
+from vieneu_audio_quality import (
+    process_vienneu_audio,
+    get_file_extension,
+    AudioQuality,
+)
 
 load_dotenv()
 
@@ -92,29 +101,65 @@ if PROXY:
 
 generation_status: Dict[str, dict] = {}
 _generation_locks: Dict[str, asyncio.Lock] = {}
+_cancellation_requests: Dict[str, bool] = {}
+
+
+def request_cancellation(cache_id: str) -> bool:
+    """Mark a generation for cancellation. Returns True if active generation found."""
+    if cache_id not in generation_status:
+        return False
+    _cancellation_requests[cache_id] = True
+    return True
+
+
+def is_cancelled(cache_id: str) -> bool:
+    """Check and consume cancellation flag."""
+    return _cancellation_requests.pop(cache_id, False)
 
 # ---------------------------------------------------------------------------
 # Language & Voice Registry
 # ---------------------------------------------------------------------------
 
 def _load_vieneu_voices() -> List[Dict[str, str]]:
-    """Load VieNeu preset voices at startup. Returns empty list if not available."""
+    """Load VieNeu preset voices from local voices.json file.
+
+    Returns all 6 preset voices:
+    - Binh (nam miền Bắc) - default
+    - Tuyen (nam miền Bắc)
+    - Vinh (nam miền Nam)
+    - Doan (nữ miền Nam)
+    - Ly (nữ miền Bắc)
+    - Ngoc (nữ miền Bắc)
+    """
     try:
-        from vieneu import Vieneu
-        tts = Vieneu()
-        available = tts.list_preset_voices()
+        from vieneu_model import get_preset_voices_from_file
+
+        available = get_preset_voices_from_file()
         voices = [
             {"value": "vieneu:default", "label": "Mặc định [VieNeu]", "engine": "vieneu"}
         ]
+
         for desc, name in available:
+            # Map voice IDs to user-friendly labels
+            voice_labels = {
+                "Binh": "Bình (nam miền Bắc) [VieNeu]",
+                "Tuyen": "Tuyền - Bác sĩ (nam miền Bắc) [VieNeu]",
+                "Vinh": "Vinh (nam miền Nam) [VieNeu]",
+                "Doan": "Doãn (nữ miền Nam) [VieNeu]",
+                "Ly": "Ly (nữ miền Bắc) [VieNeu]",
+                "Ngoc": "Ngọc (nữ miền Bắc) [VieNeu]",
+            }
+            label = voice_labels.get(name, f"{desc} [VieNeu]")
             voices.append({
                 "value": f"vieneu:{name}",
-                "label": f"{desc} [VieNeu]",
+                "label": label,
                 "engine": "vieneu"
             })
+
+        logger.info(f"Loaded {len(voices)} VieNeu voices")
         return voices
-    except Exception:
-        # VieNeu not installed or not available yet
+    except Exception as e:
+        logger.warning(f"Failed to load VieNeu voices: {e}")
         return []
 
 
@@ -1019,60 +1064,125 @@ async def edge_tts_to_audio_and_words(text: str, voice: str) -> Tuple[bytes, Lis
     return b"".join(audio_parts), words
 
 
-async def vieneu_tts_to_audio(text: str, voice: str) -> bytes:
+async def vieneu_tts_to_audio(
+    text: str,
+    voice: str,
+    audio_quality: AudioQuality = "standard",
+    add_natural_pauses: bool = True,
+    pause_duration_ms: int = 300,
+) -> tuple[bytes, str]:
     """
-    Generate audio using VieNeu-TTS.
-    Returns: audio bytes (WAV format, 24kHz)
+    Generate audio using VieNeu-TTS with quality enhancements.
 
-    Voice format: "vieneu:default" or "vieneu:{preset_id}"
+    Args:
+        text: Text to synthesize
+        voice: Voice ID (e.g., "vieneu:default" or "vieneu:{preset_id}")
+        audio_quality: "standard" (128k), "high" (192k), or "lossless" (WAV)
+        add_natural_pauses: Whether to add fade effects for smoother audio
+        pause_duration_ms: Silence to append (for internal chunk processing)
+
+    Returns:
+        Tuple of (audio_bytes, file_extension)
     """
-    from vieneu import Vieneu
-    import io
-    import wave
-    import tempfile
+    from vieneu_model import get_vieneu_model
 
-    tts = Vieneu()
-
-    # Handle preset voices
+    # Handle preset voices - need to get them before entering context
     preset_voice = None
-    if voice != "vieneu:default":
-        preset_id = voice.split(":", 1)[1]
-        try:
-            available = tts.list_preset_voices()
-            for desc, name in available:
-                if name == preset_id:
-                    preset_voice = tts.get_preset_voice(name)
-                    break
-        except Exception:
-            pass  # Fall back to default voice if preset lookup fails
+    with get_vieneu_model() as tts:
+        if voice != "vieneu:default":
+            preset_id = voice.split(":", 1)[1]
+            try:
+                available = tts.list_preset_voices()
+                for desc, name in available:
+                    if name == preset_id:
+                        preset_voice = tts.get_preset_voice(name)
+                        break
+            except Exception:
+                pass  # Fall back to default voice if preset lookup fails
 
     # Run in thread pool since VieNeu is synchronous
     loop = asyncio.get_running_loop()
 
     def _generate():
+        # Acquire model lock for inference
+        with get_vieneu_model() as tts:
+            try:
+                if preset_voice:
+                    audio_array = tts.infer(text=text, voice=preset_voice)
+                else:
+                    audio_array = tts.infer(text=text)
+
+                # Process audio with quality enhancements (includes MP3 conversion)
+                return process_vienneu_audio(
+                    audio_array=audio_array,
+                    audio_quality=audio_quality,
+                    apply_normalization=True,
+                    apply_fade=add_natural_pauses,
+                    fade_ms=10,
+                    silence_ms=pause_duration_ms if add_natural_pauses else 0,
+                )
+            except Exception as e:
+                raise RuntimeError(f"VieNeu TTS failed: {e}")
+
+    return await loop.run_in_executor(None, _generate)
+
+
+def vieneu_tts_to_audio_sync(
+    text: str,
+    voice: str,
+    audio_quality: AudioQuality = "standard",
+    add_natural_pauses: bool = True,
+    pause_duration_ms: int = 300,
+) -> tuple[bytes, str]:
+    """
+    Synchronous wrapper for VieNeu TTS with quality enhancements.
+    For use with ThreadPoolExecutor.
+
+    Args:
+        text: Text to synthesize
+        voice: Voice ID (e.g., "vieneu:default" or "vieneu:{preset_id}")
+        audio_quality: "standard" (128k), "high" (192k), or "lossless" (WAV)
+        add_natural_pauses: Whether to add fade effects for smoother audio
+        pause_duration_ms: Silence to append (for internal chunk processing)
+
+    Returns:
+        Tuple of (audio_bytes, file_extension)
+    """
+    from vieneu_model import get_vieneu_model
+
+    # Handle preset voices - need to get them before entering context
+    preset_voice = None
+    with get_vieneu_model() as tts:
+        if voice != "vieneu:default":
+            preset_id = voice.split(":", 1)[1]
+            try:
+                available = tts.list_preset_voices()
+                for desc, name in available:
+                    if name == preset_id:
+                        preset_voice = tts.get_preset_voice(name)
+                        break
+            except Exception:
+                pass  # Fall back to default voice if preset lookup fails
+
+    # Acquire model lock for inference
+    with get_vieneu_model() as tts:
         try:
             if preset_voice:
                 audio_array = tts.infer(text=text, voice=preset_voice)
             else:
                 audio_array = tts.infer(text=text)
 
-            # Convert numpy array to WAV bytes
-            # audio_array is int16 PCM at 24kHz
-            sample_rate = 24000  # VieNeu uses 24kHz
-
-            # Create WAV file in memory
-            with io.BytesIO() as wav_buffer:
-                with wave.open(wav_buffer, 'wb') as wav_file:
-                    wav_file.setnchannels(1)  # Mono
-                    wav_file.setsampwidth(2)  # 2 bytes per sample (int16)
-                    wav_file.setframerate(sample_rate)
-                    wav_file.writeframes(audio_array.tobytes())
-                return wav_buffer.getvalue()
-
+            # Process audio with quality enhancements
+            return process_vienneu_audio(
+                audio_array=audio_array,
+                audio_quality=audio_quality,
+                apply_normalization=True,
+                apply_fade=add_natural_pauses,
+                fade_ms=10,
+                silence_ms=pause_duration_ms if add_natural_pauses else 0,
+            )
         except Exception as e:
             raise RuntimeError(f"VieNeu TTS failed: {e}")
-
-    return await loop.run_in_executor(None, _generate)
 
 
 def gtts_to_bytes(text: str, lang: str = "vi") -> bytes:
@@ -1100,6 +1210,58 @@ def gtts_to_bytes(text: str, lang: str = "vi") -> bytes:
 # ---------------------------------------------------------------------------
 # Background generation
 # ---------------------------------------------------------------------------
+def generate_chunks_sync(
+    text: str,
+    voice: str,
+    engine: str,
+    cache_id: str,
+    language: str = "vi",
+    chunks: Optional[List[str]] = None,
+    audio_quality: AudioQuality = "standard",
+    add_natural_pauses: bool = True,
+    pause_duration_ms: int = 300,
+):
+    """
+    Synchronous wrapper for generate_chunks to use with BackgroundTasks.
+
+    FastAPI BackgroundTasks runs tasks in a thread pool, which doesn't have
+    an active event loop. This wrapper creates a new event loop to run the
+    async generate_chunks function.
+    """
+    thread_id = threading.get_ident()
+    print(f"[BG-TASK] Starting generate_chunks_sync for {cache_id} in thread {thread_id}")
+    logger.info(f"[BG-TASK] Starting generate_chunks_sync for {cache_id} in thread {thread_id}")
+
+    # Create a new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        # Run the async function in the new loop
+        loop.run_until_complete(
+            generate_chunks(
+                text=text,
+                voice=voice,
+                engine=engine,
+                cache_id=cache_id,
+                language=language,
+                chunks=chunks,
+                audio_quality=audio_quality,
+                add_natural_pauses=add_natural_pauses,
+                pause_duration_ms=pause_duration_ms,
+            )
+        )
+        print(f"[BG-TASK] Completed generate_chunks for {cache_id}")
+        logger.info(f"[BG-TASK] Completed generate_chunks for {cache_id}")
+    except Exception as e:
+        print(f"[BG-TASK] Error for {cache_id}: {e}")
+        traceback.print_exc()
+        logger.error(f"[BG-TASK] Error for {cache_id}: {e}\n{traceback.format_exc()}")
+    finally:
+        # Clean up the loop
+        loop.close()
+
+
 async def generate_chunks(
     text: str,
     voice: str,
@@ -1107,6 +1269,9 @@ async def generate_chunks(
     cache_id: str,
     language: str = "vi",
     chunks: Optional[List[str]] = None,
+    audio_quality: AudioQuality = "standard",
+    add_natural_pauses: bool = True,
+    pause_duration_ms: int = 300,
 ):
     if cache_id not in _generation_locks:
         _generation_locks[cache_id] = asyncio.Lock()
@@ -1183,10 +1348,58 @@ async def generate_chunks(
 
         try:
             for i, chunk_text in enumerate(chunks):
+                # Check for cancellation before processing chunk
+                if is_cancelled(cache_id):
+                    save_cache_meta(
+                        cache_id,
+                        {
+                            "status": "stopped",
+                            "progress": i,
+                            "total": total,
+                            "text_hash": md5_short(text),
+                            "voice": voice,
+                            "engine": engine,
+                            "language": language,
+                            "subtitle_supported": engine == "edge",
+                            "subtitle_ready": False,
+                            "subtitle_cues": 0,
+                        },
+                    )
+                    generation_status.pop(cache_id, None)
+                    return
+
+                # Update progress before generation (better UX feedback)
+                generation_status[cache_id]["progress"] = i
+                generation_status[cache_id]["status"] = "generating"
+                save_cache_meta(
+                    cache_id,
+                    {
+                        "status": "generating",
+                        "progress": i,
+                        "total": total,
+                        "text_hash": md5_short(text),
+                        "voice": voice,
+                        "engine": engine,
+                        "language": language,
+                        "subtitle_supported": engine == "edge",
+                        "subtitle_ready": False,
+                        "subtitle_cues": 0,
+                    },
+                )
+
                 if engine == "edge":
                     audio, words = await edge_tts_to_audio_and_words(chunk_text, voice)
                 elif engine == "vieneu":
-                    audio = await vieneu_tts_to_audio(chunk_text, voice)
+                    # Use sync version directly in thread pool for better performance
+                    audio, ext = await loop.run_in_executor(
+                        None,
+                        vieneu_tts_to_audio_sync,
+                        chunk_text,
+                        voice,
+                        audio_quality,
+                        add_natural_pauses,
+                        pause_duration_ms if i < total - 1 else 0,  # No pause on last chunk
+                    )
                     words = []  # VieNeu doesn't provide word-level timing
                 else:  # gtts
                     gtts_lang = GTTS_LANG_MAP.get(language, "en")
@@ -1339,6 +1552,17 @@ async def get_voices():
     }
 
 
+@app.get("/tts/health")
+async def health_check():
+    """Check if VieNeu model pool is ready."""
+    from vieneu_model import get_pool_info
+    pool_info = get_pool_info()
+    return {
+        "vieneu_ready": pool_info["warmed_up"],
+        "pool_size": pool_info["pool_size"]
+    }
+
+
 @app.post("/tts/start")
 async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
     # If source_chapters provided, concatenate texts
@@ -1415,7 +1639,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
         },
     )
 
-    background_tasks.add_task(generate_chunks, text_to_process, voice, engine, cache_id, language, chunk_preview)
+    background_tasks.add_task(generate_chunks_sync, text_to_process, voice, engine, cache_id, language, chunk_preview)
 
     return {
         "cache_id": cache_id,
@@ -1433,6 +1657,26 @@ async def get_status(cache_id: str):
     if not status:
         raise HTTPException(status_code=404, detail="Not found")
     return status
+
+
+@app.delete("/tts/file/{cache_id}")
+async def delete_audio(cache_id: str):
+    """Cancel ongoing generation or delete completed audio file."""
+    cache_id = validate_cache_id(cache_id)
+
+    # Check if generation is in progress
+    in_progress = cache_id in generation_status
+
+    if in_progress:
+        # Request cancellation
+        if request_cancellation(cache_id):
+            return {"status": "cancelling", "message": "Generation cancellation requested"}
+        else:
+            raise HTTPException(status_code=404, detail="Generation not found")
+    else:
+        # Delete completed audio file
+        cleanup_incomplete_cache(cache_id)
+        return {"status": "deleted", "message": "Audio file deleted"}
 
 
 @app.get("/tts/file/{cache_id}")
@@ -1794,6 +2038,15 @@ async def startup_event():
     background_tasks = BackgroundTasks()
     register_cleanup_task(background_tasks)
     logger.info("Document upload cleanup task registered")
+
+    # Initialize VieNeu model pool (critical for TTS generation)
+    from vieneu_model import initialize_model_pool
+    try:
+        initialize_model_pool()
+        logger.info("VieNeu model pool initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize VieNeu model pool: {e}")
+        # Don't fail startup - other engines (Edge, gTTS) still work
 
     # Recover orphan jobs from previous run
     from job_queue import recover_orphan_jobs

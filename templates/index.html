@@ -848,6 +848,15 @@
         <textarea id="textInput" placeholder="Nhập nội dung muốn chuyển thành audio..."></textarea>
 
         <div class="controls">
+            <div class="ctrl-group">
+                <label for="engine">Engine</label>
+                <select id="engine">
+                    <option value="edge">Edge-TTS (có subtitle live)</option>
+                    <option value="vieneu">VieNeu-TTS (chất lượng cao, không subtitle)</option>
+                    <option value="gtts">Google TTS (không subtitle)</option>
+                </select>
+            </div>
+
             <div class="ctrl-group" id="voiceGroup">
                 <label for="voice">Voice</label>
                 <select id="voice"></select>
@@ -2662,6 +2671,7 @@
 
         const textInput = document.getElementById('textInput');
         const voiceSel = document.getElementById('voice');
+        const engineSel = document.getElementById('engine');
         const voiceGroup = document.getElementById('voiceGroup');
         const engineIndicator = document.getElementById('engineIndicator');
         const speedSelect = document.getElementById('speedSelect');
@@ -2715,7 +2725,12 @@
         }
 
         function updateVoiceDropdown() {
-            const voices = voiceRegistry[currentLang] || [];
+            const selectedEngine = engineSel.value;
+            const allVoices = voiceRegistry[currentLang] || [];
+
+            // Filter voices by selected engine
+            const voices = allVoices.filter(v => v.engine === selectedEngine);
+
             voiceSel.innerHTML = '';
 
             voices.forEach(v => {
@@ -2725,19 +2740,14 @@
                 voiceSel.appendChild(opt);
             });
 
-            // Show engine indicator based on first voice (all voices for a language have same engines)
-            if (voices.length > 0) {
-                const firstVoice = voices[0];
-                const engine = firstVoice.engine || 'edge';
-                updateEngineIndicator(engine);
-            }
-
+            updateEngineIndicator(selectedEngine);
             updateVoiceVisibility();
         }
 
         function updateVoiceVisibility() {
-            // Voice dropdown is always visible now (all engines have voices)
-            voiceGroup.style.display = '';
+            // Hide voice dropdown for gTTS (uses language instead)
+            const selectedEngine = engineSel.value;
+            voiceGroup.style.display = selectedEngine === 'gtts' ? 'none' : '';
         }
 
         function updateEngineIndicator(engine) {
@@ -3108,7 +3118,7 @@
                         return;
                     }
 
-                    if (data.status === 'processing') {
+                    if (data.status === 'processing' || data.status === 'generating') {
                         if (currentMode === 'mse' && subtitleSupported) {
                             setStatus(`Đang tạo audio + subtitle live... (${data.progress || 0}/${data.total || 0})`);
                             setBadge('live');
@@ -3178,9 +3188,7 @@
 
             const text = textInput.value.trim();
             const voice = voiceSel.value;
-
-            // Auto-detect engine from voice (vieneu:* -> vieneu, others -> edge)
-            const detectedEngine = voice.startsWith('vieneu:') ? 'vieneu' : 'edge';
+            const engine = engineSel.value;
 
             if (!text) {
                 showModal({
@@ -3196,10 +3204,13 @@
 
             resetUI();
             convertBtn.disabled = true;
-            subtitleSupported = detectedEngine === 'edge';
+            subtitleSupported = engine === 'edge';
 
-            const body = { text, voice, language: currentLang };
-            // Engine is auto-detected from voice on backend
+            const body = { text, engine, language: currentLang };
+            // Only send voice parameter for Edge and VieNeu engines
+            if (engine !== 'gtts') {
+                body.voice = voice;
+            }
 
             let data;
             try {
@@ -3250,7 +3261,7 @@
                     setStatus('Đang tạo audio + subtitle live...');
                 } else {
                     setBadge('live');
-                    setStatus('Đang tạo audio live (Google TTS, không subtitle)...');
+                    setStatus('Đang tạo audio live...');
                 }
 
                 startPolling(currentCacheId, { allowDirectPlayWhenCompleted: false });
@@ -3272,6 +3283,8 @@
                 setSampleText(currentLang);
             });
         });
+
+        engineSel.addEventListener('change', updateVoiceDropdown);
 
         (async () => {
             try {
