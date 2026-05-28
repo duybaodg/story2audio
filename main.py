@@ -1679,6 +1679,22 @@ async def delete_audio(cache_id: str):
         return {"status": "deleted", "message": "Audio file deleted"}
 
 
+@app.delete("/tts/cache")
+async def clear_all_cache():
+    """Clear all audio cache files."""
+    if not os.path.exists(CACHE_DIR):
+        return {"status": "cleared", "deleted": 0}
+
+    deleted_count = 0
+    for filename in os.listdir(CACHE_DIR):
+        filepath = os.path.join(CACHE_DIR, filename)
+        if remove_if_exists(filepath):
+            deleted_count += 1
+
+    logger.info(f"Cleared all audio cache: {deleted_count} files deleted")
+    return {"status": "cleared", "deleted": deleted_count}
+
+
 @app.get("/tts/file/{cache_id}")
 async def get_audio_file(cache_id: str, request: Request):
     cache_id = validate_cache_id(cache_id)
@@ -1917,27 +1933,35 @@ async def stream_audio_live(cache_id: str):
     audio_path = get_audio_path(cache_id)
 
     # Chờ đến khi có byte đầu tiên
-    for _ in range(150):  # ~15 giây
+    for _ in range(300):  # ~30 giây (increased from 15s for VieNeu cold start)
         if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
             break
 
         st = get_effective_status(cache_id)
         if st and st.get("status") == "failed":
             err = st.get("error", "generation failed")
+            logger.warning(f"Stream failed for {cache_id}: {err}")
             raise HTTPException(status_code=503, detail=f"Generation failed: {err}")
 
         await asyncio.sleep(0.1)
     else:
         st = get_effective_status(cache_id)
+        state = st.get("status") if st else None
+        file_exists = os.path.exists(audio_path)
+        file_size = os.path.getsize(audio_path) if file_exists else 0
+
         if st and st.get("status") == "failed":
             err = st.get("error", "generation failed")
+            logger.warning(f"Stream timeout for {cache_id}: status=failed, error={err}")
             raise HTTPException(status_code=503, detail=f"Generation failed: {err}")
         if st and st.get("status") in {"queued", "processing", "generating"}:
+            logger.warning(f"Stream timeout for {cache_id}: status={state}, file_exists={file_exists}, file_size={file_size}")
             raise HTTPException(
                 status_code=503,
                 detail="Audio is still being generated, retry later.",
                 headers={"Retry-After": "5"},
             )
+        logger.warning(f"Stream timeout for {cache_id}: status={state}, file_exists={file_exists}, file_size={file_size}")
         raise HTTPException(status_code=404, detail="Audio not ready")
 
     async def generate() -> AsyncGenerator[bytes, None]:

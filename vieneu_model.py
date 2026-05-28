@@ -146,6 +146,12 @@ def get_vieneu_model():
     logger.warning("Model pool not available, creating new instance")
     from vieneu import Vieneu
     model = Vieneu()
+    # Warm up with at least 1 inference to avoid cold start delay
+    try:
+        model.infer("warmup")
+        logger.info("Fallback model warmed up successfully")
+    except Exception as e:
+        logger.warning(f"Fallback model warmup failed: {e}")
     yield model
 
 

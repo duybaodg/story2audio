@@ -213,6 +213,24 @@
         .download-btn.gray {
             background: linear-gradient(135deg, #334155, #1e293b);
         }
+        .clear-cache-btn {
+            display: none;
+            text-decoration: none;
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-weight: 700;
+            color: #fff;
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+            cursor: pointer;
+            border: none;
+        }
+        .clear-cache-btn:hover {
+            filter: brightness(1.05);
+        }
+        .clear-cache-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
         .tip {
             margin-top: 10px;
             color: #475569;
@@ -975,6 +993,7 @@
             <a id="downloadAudioBtn" class="download-btn" download="audio.mp3">⬇ Tải MP3</a>
             <a id="downloadSrtBtn" class="download-btn alt" download="subtitle.srt">⬇ Tải SRT</a>
             <a id="downloadVttBtn" class="download-btn gray" download="subtitle.vtt">⬇ Tải VTT</a>
+            <button id="clearCacheBtn" class="clear-cache-btn">🗑 Xóa cache</button>
         </div>
     </div>
 
@@ -2691,6 +2710,7 @@
         const downloadAudioBtn = document.getElementById('downloadAudioBtn');
         const downloadSrtBtn = document.getElementById('downloadSrtBtn');
         const downloadVttBtn = document.getElementById('downloadVttBtn');
+        const clearCacheBtn = document.getElementById('clearCacheBtn');
 
         function setSampleText(lang) {
             textInput.value = SAMPLE_TEXT[lang] || '';
@@ -2865,6 +2885,7 @@
             downloadAudioBtn.style.display = 'none';
             downloadSrtBtn.style.display = 'none';
             downloadVttBtn.style.display = 'none';
+            clearCacheBtn.style.display = 'none';
 
             downloadAudioBtn.href = '';
             downloadSrtBtn.href = '';
@@ -2911,6 +2932,9 @@
                 downloadSrtBtn.style.display = 'inline-flex';
                 downloadVttBtn.style.display = 'inline-flex';
             }
+
+            // Show clear cache button
+            clearCacheBtn.style.display = 'inline-flex';
         }
 
         function startSubtitleSyncLoop() {
@@ -3273,6 +3297,60 @@
                 startPolling(currentCacheId, { allowDirectPlayWhenCompleted: true });
             }
 
+        });
+
+        // Clear cache button handler
+        clearCacheBtn.addEventListener('click', async () => {
+            if (!confirm('Bạn có chắc muốn xóa toàn bộ cache audio? Hành động này không thể hoàn tác.')) {
+                return;
+            }
+
+            clearCacheBtn.disabled = true;
+            clearCacheBtn.textContent = 'Đang xóa...';
+
+            try {
+                const res = await fetch('/tts/cache', { method: 'DELETE' });
+                if (!res.ok) throw new Error('Không thể xóa cache');
+
+                const data = await res.json();
+                showToast({
+                    variant: 'success',
+                    title: 'Đã xóa cache',
+                    message: `Đã xóa ${data.deleted} file cache.`,
+                    duration: 3000
+                });
+
+                // Reset player state
+                player.pause();
+                player.removeAttribute('src');
+                player.load();
+                subtitlePanel.innerHTML = 'Subtitle live sẽ hiện ở đây khi dùng Edge-TTS.';
+                subtitlePanel.classList.add('empty');
+                playerWrap.style.display = 'none';
+                statusWrap.style.display = 'block';
+                updateProgress(0, 0);
+                setStatus('Đã xóa cache. Nhập văn bản để tạo audio mới.');
+                setBadge('wait');
+
+                // Hide download buttons
+                downloadAudioBtn.style.display = 'none';
+                downloadSrtBtn.style.display = 'none';
+                downloadVttBtn.style.display = 'none';
+                clearCacheBtn.style.display = 'none';
+
+                currentCacheId = null;
+            } catch (err) {
+                console.error('[Clear Cache] Error:', err);
+                showToast({
+                    variant: 'error',
+                    title: 'Lỗi',
+                    message: 'Không thể xóa cache. Vui lòng thử lại.',
+                    duration: 5000
+                });
+            } finally {
+                clearCacheBtn.disabled = false;
+                clearCacheBtn.textContent = '🗑 Xóa cache';
+            }
         });
 
         document.querySelectorAll('.lang-btn').forEach(btn => {
