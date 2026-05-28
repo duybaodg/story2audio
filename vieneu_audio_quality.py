@@ -415,9 +415,9 @@ def process_vienneu_audio(
         audio_bytes = int16_to_wav_bytes(audio_int16)
         file_extension = "wav"
     else:
-        # Use VBR encoding
-        vbr_quality = 2 if audio_quality == "standard" else 0
-        audio_bytes = encode_mp3_vbr(audio_int16, vbr_quality=vbr_quality)
+        # Use CBR encoding to avoid MP3 concatenation issues
+        bitrate = "128k" if audio_quality == "standard" else "192k"
+        audio_bytes = encode_mp3_cbr(audio_int16, bitrate=bitrate)
         file_extension = "mp3"
 
     return audio_bytes, file_extension
@@ -437,17 +437,21 @@ def get_bitrate_for_quality(audio_quality: AudioQuality) -> Optional[str]:
     return BITRATE_MAP.get(audio_quality)
 
 
-def encode_mp3_vbr(
+def encode_mp3_cbr(
     audio: np.ndarray,
-    vbr_quality: int = 2,
+    bitrate: str = "128k",
     sample_rate: int = VIENEU_SAMPLE_RATE,
 ) -> bytes:
     """
-    Encode audio to MP3 using VBR (Variable Bitrate).
+    Encode audio to MP3 using CBR (Constant Bitrate).
+
+    CBR encoding avoids VBR/Xing header issues that cause
+    some MP3 players to stop playback after the first chunk
+    when concatenating multiple MP3 files.
 
     Args:
         audio: Input audio (int16 numpy array)
-        vbr_quality: VBR quality (0=best, 9=worst)
+        bitrate: CBR bitrate (e.g., "128k", "192k")
         sample_rate: Sample rate in Hz
 
     Returns:
@@ -464,13 +468,16 @@ def encode_mp3_vbr(
         channels=1  # Mono
     )
 
-    # Export with VBR encoding
+    # Export with CBR encoding (no VBR parameters)
     output = io.BytesIO()
     audio_segment.export(
         output,
         format='mp3',
-        bitrate=f'{128 + (2 - vbr_quality) * 32}k',  # Map VBR to approximate bitrate
-        parameters=['-q:a', str(vbr_quality)]  # Use VBR quality preset
+        bitrate=bitrate
     )
 
     return output.getvalue()
+
+
+# Keep old name for compatibility but redirect to CBR
+encode_mp3_vbr = encode_mp3_cbr
