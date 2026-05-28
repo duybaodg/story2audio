@@ -2,7 +2,7 @@
 import os
 import re
 import asyncio
-from typing import AsyncGenerator, List, Callable, Optional, Dict
+from typing import AsyncGenerator, List, Callable, Optional, Dict, Any
 from pathlib import Path
 from models import Chapter, FileType, ExtractionMethod
 import PyPDF2
@@ -49,6 +49,93 @@ def _assess_text_quality(text: str) -> float:
         score -= 0.1
 
     return max(0.0, min(1.0, score))
+
+
+async def _extract_batch(
+    chapters: List[Chapter],
+    extract_fn: Callable,
+    parallel: bool = True
+) -> List[Chapter]:
+    """
+    Extract a batch of chapters.
+
+    Args:
+        chapters: List of Chapter objects to extract
+        extract_fn: Async function to extract a chapter
+        parallel: If True, extract all in parallel; otherwise sequential
+
+    Returns:
+        List of extracted Chapter objects
+    """
+    if parallel:
+        tasks = [extract_fn(ch) for ch in chapters]
+        return await asyncio.gather(*tasks)
+    else:
+        results = []
+        for ch in chapters:
+            result = await extract_fn(ch)
+            results.append(result)
+        return results
+
+
+async def extract_chapters_parallel(
+    document: 'Document',
+    chapters: List[Chapter],
+    extract_fn: Callable,
+    progress_callback: Optional[Callable[[float, str], None]] = None
+) -> List[Chapter]:
+    """
+    Extract chapters with adaptive parallelization.
+
+    Small chapters (<5000 words) are extracted in parallel.
+    Large chapters (>=5000 words) are extracted in batches of 4.
+
+    Args:
+        document: Document being extracted
+        chapters: List of Chapter objects
+        extract_fn: Async function that takes a Chapter and returns extracted Chapter
+        progress_callback: Optional callback for progress updates
+
+    Returns:
+        List of extracted chapters, sorted by chapter_number
+    """
+    # Classify chapters by size
+    SMALL_CHAPTER_THRESHOLD = 5000  # words
+    LARGE_BATCH_SIZE = 4
+
+    small_chapters = [c for c in chapters if c.word_count < SMALL_CHAPTER_THRESHOLD]
+    large_chapters = [c for c in chapters if c.word_count >= SMALL_CHAPTER_THRESHOLD]
+
+    results = []
+    total_chapters = len(chapters)
+    completed = 0
+
+    # Small chapters: extract all in parallel
+    if small_chapters:
+        small_results = await _extract_batch(small_chapters, extract_fn, parallel=True)
+        results.extend(small_results)
+        completed += len(small_results)
+
+        if progress_callback:
+            progress = completed / total_chapters
+            progress_callback(progress, f"Extracted {completed}/{total_chapters} chapters")
+
+    # Large chapters: extract in batches
+    if large_chapters:
+        for i in range(0, len(large_chapters), LARGE_BATCH_SIZE):
+            batch = large_chapters[i:i + LARGE_BATCH_SIZE]
+            batch_results = await _extract_batch(batch, extract_fn, parallel=True)
+            results.extend(batch_results)
+            completed += len(batch_results)
+
+            if progress_callback:
+                progress = completed / total_chapters
+                progress_callback(progress, f"Extracted {completed}/{total_chapters} chapters")
+
+    # Sort results by chapter_number
+    results.sort(key=lambda c: c.chapter_number)
+    return results
+
 
 def _detect_chapters_in_text(
     text: str,
@@ -238,14 +325,14 @@ async def extract_epub_text(document_id: str, file_path: str) -> AsyncGenerator[
         Chapter objects as they're extracted
     """
     try:
-        from ebooklib import epub
+        from ebooklib import epub, ITEM_DOCUMENT
 
         epub_book = epub.read_epub(file_path)
         all_text = []
         chapter_num = 0
 
         for item in epub_book.get_items():
-            if item.get_type() == 9:  # ebooklib.ITEM_DOCUMENT = 9
+            if item.get_type() == ITEM_DOCUMENT:
                 try:
                     content = item.get_content()
                     # Extract text from HTML (basic)
@@ -396,7 +483,7 @@ def extract_epub_text_blocking(
         List of chapter dictionaries
     """
     try:
-        from ebooklib import epub
+        from ebooklib import epub, ITEM_DOCUMENT
 
         chapters = []
         book = epub.read_epub(file_path)
@@ -406,7 +493,7 @@ def extract_epub_text_blocking(
         total_items = len(all_items)
 
         for idx, item in enumerate(all_items):
-            if item.get_type() == 9:  # ebooklib.ITEM_DOCUMENT
+            if item.get_type() == ITEM_DOCUMENT:
                 # Extract text from HTML content
                 content = item.get_content()
                 # Simple text extraction (strip HTML tags)
@@ -463,3 +550,80 @@ def extract_epub_text_blocking(
         })
 
     return result
+
+
+async def extract_chapter_with_ocr(
+    document: 'Document',
+    chapter_index: int,
+    progress_callback: Optional[Callable[[float], None]] = None
+) -> Chapter:
+    """
+    Extract a single chapter using OCR.
+
+    Args:
+        document: Document to extract from
+        chapter_index: Index of chapter to extract
+        progress_callback: Optional progress callback
+
+    Returns:
+        Chapter with OCR-extracted text
+    """
+    try:
+        from pdf2image import convert_from_path
+        from pytesseract import image_to_string
+        from PIL import Image
+    except ImportError as e:
+        raise ImportError(
+            f"OCR dependencies not available: {e}. "
+            "Install with: pip install pytesseract pdf2image Pillow"
+        )
+
+    # Get chapters from metadata
+    chapters = document.metadata.get("chapters", [])
+    if chapter_index >= len(chapters):
+        raise ValueError(f"Chapter {chapter_index} not found")
+
+    chapter_data = chapters[chapter_index]
+
+    # Convert PDF pages to images
+    start_page = chapter_data.get("start_page", 1)
+    end_page = chapter_data.get("end_page", start_page)
+
+    images = convert_from_path(
+        document.file_path,
+        first_page=start_page,
+        last_page=end_page,
+    )
+
+    # Run OCR on each page
+    full_text = []
+    for i, img in enumerate(images):
+        if progress_callback:
+            progress_callback((i + 1) / len(images))
+
+        # OCR with Vietnamese + English
+        text = image_to_string(
+            img,
+            lang='vie+eng',
+            config='--psm 6'
+        )
+        full_text.append(text)
+
+    combined_text = "\n".join(full_text)
+
+    # Update chapter with OCR result
+    chapter = Chapter(
+        chapter_id=chapter_data.get("chapter_id", f"ch_{chapter_index}"),
+        document_id=document.document_id,
+        chapter_number=chapter_index,
+        title=chapter_data.get("title", f"Chapter {chapter_index + 1}"),
+        text_preview=combined_text[:500] if combined_text else "",
+        full_text=combined_text,
+        word_count=len(combined_text.split()) if combined_text else 0,
+        extraction_method=ExtractionMethod.OCR,
+        quality_score=1.0,
+        needs_ocr=False,
+        ocr_processed=True
+    )
+
+    return chapter

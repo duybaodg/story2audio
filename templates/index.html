@@ -831,9 +831,137 @@
             background: #3b82f6;
             transition: width 0.3s ease;
         }
+
+        /* Generation Action Buttons */
+        .generation-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            justify-content: center;
+        }
+
+        .btn-stop, .btn-delete, .btn-continue {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-family: inherit;
+            transition: background-color 0.2s;
+        }
+
+        .btn-stop {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            background: #d97706;
+        }
+
+        .btn-continue {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-continue:hover:not(:disabled) {
+            background: #059669;
+        }
+
+        .btn-delete {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-delete:hover:not(:disabled) {
+            background: #dc2626;
+        }
+
+        .btn-stop:disabled, .btn-continue:disabled, .btn-delete:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Session Restoration Banner */
+        .session-banner {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            z-index: 1000;
+            transform: translateY(-100%);
+            transition: transform 0.3s ease;
+        }
+
+        .session-banner.visible {
+            transform: translateY(0);
+        }
+
+        .session-banner-content {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .session-banner-icon {
+            font-size: 24px;
+        }
+
+        .session-banner-text {
+            flex: 1;
+        }
+
+        .session-banner-btn {
+            padding: 8px 16px;
+            background: white;
+            color: #059669;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .session-banner-btn:hover {
+            background: #f0fdf4;
+        }
+
+        .session-banner-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px 8px;
+            opacity: 0.7;
+        }
+
+        .session-banner-close:hover {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
+    <!-- Session Restoration Banner -->
+    <div id="sessionBanner" class="session-banner">
+        <div class="session-banner-content">
+            <span class="session-banner-icon">↩️</span>
+            <span class="session-banner-text">
+                Phát hiện phiên làm việc trước đó. <span id="sessionBannerDesc">Đang khôi phục...</span>
+            </span>
+        </div>
+        <button class="session-banner-btn" onclick="restoreSession()">Khôi phục</button>
+        <button class="session-banner-close" onclick="dismissSessionBanner()">×</button>
+    </div>
+
     <h1>Story to Audio + Live Subtitle</h1>
     <div class="version">Phiên bản __APP_VERSION__</div>
 
@@ -894,6 +1022,13 @@
 
             <div class="ctrl-group">
                 <button id="convertBtn" class="primary">▶ Chuyển thành audio</button>
+            </div>
+
+            <!-- Generation Action Buttons -->
+            <div class="generation-actions" id="generationActions" style="display: none;">
+                <button id="btnStop" class="btn-stop" disabled>⏸ Dừng</button>
+                <button id="btnResume" class="btn-continue" style="display: none;">▶ Tiếp tục</button>
+                <button id="btnDelete" class="btn-delete">🗑 Xóa audio</button>
             </div>
         </div>
 
@@ -3379,6 +3514,201 @@
                 setBadge('error');
             }
         })();
+
+        // ---------------------------------------------------------------------------
+        // Session Management
+        // ---------------------------------------------------------------------------
+        const SESSION_STORAGE_KEY = 'story2audio_session';
+        const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+        function saveSession(state) {
+            const sessionData = {
+                ...state,
+                timestamp: Date.now()
+            };
+            localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionData));
+        }
+
+        function loadSession() {
+            const data = localStorage.getItem(SESSION_STORAGE_KEY);
+            if (!data) return null;
+
+            const session = JSON.parse(data);
+
+            // Check expiry
+            if (Date.now() - session.timestamp > SESSION_EXPIRY_MS) {
+                clearSession();
+                return null;
+            }
+
+            return session;
+        }
+
+        function clearSession() {
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+        }
+
+        function getCurrentSessionState() {
+            // Get current state from UI
+            const currentMode = document.querySelector('.tab-btn.active')?.dataset.tab || 'paste-text';
+            const textArea = document.querySelector('textarea');
+            const voiceSelect = document.querySelector('select[name="voice"]');
+            const engineSelect = document.querySelector('select[name="engine"]');
+
+            return {
+                mode: currentMode,
+                text: textArea?.value || '',
+                voice: voiceSelect?.value || '',
+                engine: engineSelect?.value || '',
+                status: currentMode === 'cached' ? 'completed' :
+                       currentMode === 'queue' ? 'queue' : 'idle',
+                cache_id: window.currentCacheId || null,
+                filename: window.currentFilename || null
+            };
+        }
+
+        async function verifyCacheId(cacheId) {
+            try {
+                const res = await fetch(`/tts/session/${cacheId}`);
+                if (!res.ok) return null;
+                return await res.json();
+            } catch (err) {
+                console.error('Session verification failed:', err);
+                return null;
+            }
+        }
+
+        async function restoreSession() {
+            const session = loadSession();
+            if (!session) return;
+
+            // Restore form state
+            if (session.mode) {
+                document.querySelector(`[data-tab="${session.mode}"]`)?.click();
+            }
+            if (session.text) {
+                const textArea = document.querySelector('textarea');
+                if (textArea) textArea.value = session.text;
+            }
+            if (session.voice) {
+                const voiceSelect = document.querySelector('select[name="voice"]');
+                if (voiceSelect) voiceSelect.value = session.voice;
+            }
+            if (session.engine) {
+                const engineSelect = document.querySelector('select[name="engine"]');
+                if (engineSelect) engineSelect.value = session.engine;
+            }
+
+            // Verify cache if exists
+            if (session.status === 'completed' && session.cache_id) {
+                const verification = await verifyCacheId(session.cache_id);
+                if (!verification) {
+                    // Cache was deleted, restore as draft
+                    session.status = 'idle';
+                    session.cache_id = null;
+                    saveSession(session);
+                    showSessionBanner('Phiên làm việc trước đó đã được khôi phục (draft).');
+                }
+            }
+
+            dismissSessionBanner();
+        }
+
+        function showSessionBanner(description) {
+            const banner = document.getElementById('sessionBanner');
+            const descEl = document.getElementById('sessionBannerDesc');
+            if (descEl) descEl.textContent = description;
+            if (banner) banner.classList.add('visible');
+        }
+
+        function dismissSessionBanner() {
+            const banner = document.getElementById('sessionBanner');
+            if (banner) banner.classList.remove('visible');
+        }
+
+        // Check for existing session on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const session = loadSession();
+            if (session) {
+                showSessionBanner('Phát hiện phiên làm việc trước đó. Khôi phục?');
+            }
+        });
+
+        // ---------------------------------------------------------------------------
+        // Generation Action Handlers
+        // ---------------------------------------------------------------------------
+        const btnStop = document.getElementById('btnStop');
+        const btnResume = document.getElementById('btnResume');
+        const btnDelete = document.getElementById('btnDelete');
+        const generationActions = document.getElementById('generationActions');
+
+        async function stopGeneration() {
+            if (!window.currentCacheId) return;
+
+            try {
+                const res = await fetch(`/tts/stop/${window.currentCacheId}`, { method: 'POST' });
+                if (res.ok) {
+                    btnStop.style.display = 'none';
+                    btnResume.style.display = 'inline-block';
+                    btnResume.disabled = false;
+                }
+            } catch (err) {
+                console.error('Stop failed:', err);
+            }
+        }
+
+        async function resumeGeneration() {
+            if (!window.currentCacheId) return;
+
+            try {
+                const res = await fetch(`/tts/resume/${window.currentCacheId}`, { method: 'POST' });
+                if (res.ok) {
+                    btnResume.style.display = 'none';
+                    btnStop.style.display = 'inline-block';
+                    btnStop.disabled = false;
+                    // Reload page to resume streaming
+                    window.location.href = `/tts/file/${window.currentCacheId}`;
+                }
+            } catch (err) {
+                console.error('Resume failed:', err);
+            }
+        }
+
+        async function deleteGeneration() {
+            if (!window.currentCacheId) return;
+
+            if (!confirm('Bạn có chắc muốn xóa audio này?')) return;
+
+            try {
+                const res = await fetch(`/tts/file/${window.currentCacheId}`, { method: 'DELETE' });
+                if (res.ok) {
+                    clearSession();
+                    window.location.reload();
+                }
+            } catch (err) {
+                console.error('Delete failed:', err);
+            }
+        }
+
+        if (btnStop) btnStop.addEventListener('click', stopGeneration);
+        if (btnResume) btnResume.addEventListener('click', resumeGeneration);
+        if (btnDelete) btnDelete.addEventListener('click', deleteGeneration);
+
+        // Show action buttons when generation starts
+        function showGenerationActions(cacheId) {
+            window.currentCacheId = cacheId;
+            if (generationActions) {
+                generationActions.style.display = 'flex';
+                btnStop.disabled = false;
+            }
+        }
+
+        // Hide action buttons when generation completes
+        function hideGenerationActions() {
+            if (generationActions) {
+                generationActions.style.display = 'none';
+            }
+        }
     </script>
 </body>
 </html>

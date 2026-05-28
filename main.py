@@ -13,10 +13,13 @@ import traceback
 from datetime import timedelta
 from typing import List, Dict, AsyncGenerator, Optional, Tuple, Union
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+# Rate limiter for upload endpoints
+from rate_limiter import RateLimiter
 
 import edge_tts
 from gtts import gTTS
@@ -77,6 +80,47 @@ app.include_router(document_router)
 logger = logging.getLogger("story2audio")
 
 # ---------------------------------------------------------------------------
+# Rate Limiter
+# ---------------------------------------------------------------------------
+rate_limiter = RateLimiter()
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Apply rate limiting to upload initiate endpoint only.
+
+    Note: We do NOT rate limit chunk uploads because:
+    - Large files may have many chunks
+    - Rate limiting chunk uploads would break legitimate file uploads
+    - Retries after transient failures should not be blocked
+    """
+    # Only rate limit the upload initiate endpoint, NOT chunk uploads
+    if request.url.path == "/document/upload/initiate" or request.url.path.startswith("/document/upload/initiate?"):
+        limiter = app.state.rate_limiter if hasattr(app.state, 'rate_limiter') else None
+
+        if limiter:
+            # Get client IP
+            # Check for forwarded headers (proxy/load balancer)
+            forwarded_for = request.headers.get("X-Forwarded-For")
+            if forwarded_for:
+                ip = forwarded_for.split(",")[0].strip()
+            else:
+                ip = request.client.host if request.client else "unknown"
+
+            # Check limits (no session_id for initiate endpoint)
+            allowed, error = await limiter.check_upload_limits(ip, session_id=None)
+            if not allowed:
+                # Return JSONResponse directly instead of raising HTTPException
+                # This ensures proper error response from middleware
+                return JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={"detail": error}
+                )
+
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
 # Cache-ID validation (chặn path traversal)
 # ---------------------------------------------------------------------------
 _CACHE_ID_RE = re.compile(r"^[a-f0-9]{32}$")
@@ -87,6 +131,40 @@ def validate_cache_id(cache_id: str) -> str:
     if not _CACHE_ID_RE.fullmatch(cache_id):
         raise HTTPException(status_code=400, detail="Invalid cache id")
     return cache_id
+
+
+# ---------------------------------------------------------------------------
+# Session Verification Endpoint
+# ---------------------------------------------------------------------------
+@app.get("/tts/session/{cache_id}")
+async def verify_session(cache_id: str):
+    """
+    Verify if a cached TTS result still exists.
+    Returns cache metadata if found, 404 if not.
+    Used by frontend for session restoration after page refresh.
+    """
+    # Validate cache_id format to prevent path traversal
+    cache_id = validate_cache_id(cache_id)
+
+    # Check if audio file exists (try .mp3 first, then .wav for lossless)
+    audio_path = get_audio_path(cache_id, "mp3")
+    if not os.path.exists(audio_path):
+        audio_path = get_audio_path(cache_id, "wav")
+
+    if not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="Cache not found")
+
+    # Load metadata if available
+    metadata = load_cache_meta(cache_id) or {}
+
+    return {
+        "exists": True,
+        "cache_id": cache_id,
+        "duration": metadata.get("duration"),
+        "text_length": metadata.get("text_length"),
+        "voice": metadata.get("voice"),
+        "created_at": metadata.get("created_at")
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2063,6 +2141,11 @@ async def startup_event():
     register_cleanup_task(background_tasks)
     logger.info("Document upload cleanup task registered")
 
+    # Initialize rate limiter
+    await rate_limiter.initialize()
+    app.state.rate_limiter = rate_limiter
+    logger.info("Rate limiter initialized")
+
     # Initialize VieNeu model pool (critical for TTS generation)
     from vieneu_model import initialize_model_pool
     try:
@@ -2080,6 +2163,13 @@ async def startup_event():
 
     # Start periodic cleanup
     asyncio.create_task(periodic_job_cleanup())
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on shutdown."""
+    await rate_limiter.close()
+    logger.info("Rate limiter closed")
 
 
 async def periodic_job_cleanup():
