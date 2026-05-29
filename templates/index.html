@@ -15,6 +15,10 @@
             background: #f3f7fb;
             color: #243447;
         }
+
+        body.has-session-banner {
+            margin-top: calc(24px + 60px);
+        }
         h1 {
             text-align: center;
             margin-bottom: 8px;
@@ -919,33 +923,47 @@
             flex: 1;
         }
 
+        .session-banner-title {
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .session-banner-desc {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .session-banner-actions {
+            display: flex;
+            gap: 8px;
+        }
+
         .session-banner-btn {
             padding: 8px 16px;
-            background: white;
-            color: #059669;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-weight: 600;
             font-size: 14px;
+            transition: opacity 0.2s;
         }
 
-        .session-banner-btn:hover {
-            background: #f0fdf4;
+        .session-banner-btn.primary {
+            background: white;
+            color: #059669;
         }
 
-        .session-banner-close {
-            background: none;
-            border: none;
+        .session-banner-btn.primary:hover {
+            opacity: 0.9;
+        }
+
+        .session-banner-btn.secondary {
+            background: rgba(255,255,255,0.2);
             color: white;
-            font-size: 24px;
-            cursor: pointer;
-            padding: 4px 8px;
-            opacity: 0.7;
         }
 
-        .session-banner-close:hover {
-            opacity: 1;
+        .session-banner-btn.secondary:hover {
+            background: rgba(255,255,255,0.3);
         }
     </style>
 </head>
@@ -953,13 +971,16 @@
     <!-- Session Restoration Banner -->
     <div id="sessionBanner" class="session-banner">
         <div class="session-banner-content">
-            <span class="session-banner-icon">↩️</span>
-            <span class="session-banner-text">
-                Phát hiện phiên làm việc trước đó. <span id="sessionBannerDesc">Đang khôi phục...</span>
-            </span>
+            <span class="session-banner-icon">✓</span>
+            <div class="session-banner-text">
+                <div class="session-banner-title">Session Restored</div>
+                <div class="session-banner-desc" id="sessionBannerDesc">Your previous work has been restored.</div>
+            </div>
         </div>
-        <button class="session-banner-btn" onclick="restoreSession()">Khôi phục</button>
-        <button class="session-banner-close" onclick="dismissSessionBanner()">×</button>
+        <div class="session-banner-actions">
+            <button id="sessionFreshBtn" class="session-banner-btn secondary">Start Fresh</button>
+            <button id="sessionContinueBtn" class="session-banner-btn primary">Continue Working</button>
+        </div>
     </div>
 
     <h1>Story to Audio + Live Subtitle</h1>
@@ -1009,6 +1030,16 @@
                 <small style="color: #64748b; margin-top: 4px; display: block;" id="engineIndicator"></small>
             </div>
 
+            <div class="ctrl-group" id="audioQualityGroup">
+                <label for="audioQuality">Chất lượng âm thanh</label>
+                <select id="audioQuality">
+                    <option value="standard" selected>Tiêu chuẩn (128k MP3)</option>
+                    <option value="high">Cao (192k MP3)</option>
+                    <option value="lossless">Lossless (WAV)</option>
+                </select>
+                <small style="color: #64748b; margin-top: 4px; display: block;">Chỉ dùng với VieNeu-TTS</small>
+            </div>
+
             <div class="ctrl-group">
                 <label for="speedSelect">Tốc độ phát</label>
                 <select id="speedSelect">
@@ -1026,9 +1057,8 @@
 
             <!-- Generation Action Buttons -->
             <div class="generation-actions" id="generationActions" style="display: none;">
-                <button id="btnStop" class="btn-stop" disabled>⏸ Dừng</button>
-                <button id="btnResume" class="btn-continue" style="display: none;">▶ Tiếp tục</button>
-                <button id="btnDelete" class="btn-delete">🗑 Xóa audio</button>
+                <button id="btnStop" class="btn-stop" title="Dừng tạo (lưu audio một phần)">⏸ Dừng</button>
+                <button id="btnDelete" class="btn-delete" title="Xóa audio">🗑 Xóa audio</button>
             </div>
         </div>
 
@@ -2903,6 +2933,12 @@
             // Hide voice dropdown for gTTS (uses language instead)
             const selectedEngine = engineSel.value;
             voiceGroup.style.display = selectedEngine === 'gtts' ? 'none' : '';
+
+            // Show audio quality selector only for VieNeu
+            const audioQualityGroup = document.getElementById('audioQualityGroup');
+            if (audioQualityGroup) {
+                audioQualityGroup.style.display = selectedEngine === 'vieneu' ? '' : 'none';
+            }
         }
 
         function updateEngineIndicator(engine) {
@@ -3370,6 +3406,10 @@
             if (engine !== 'gtts') {
                 body.voice = voice;
             }
+            // Add audio quality for VieNeu engine
+            if (engine === 'vieneu') {
+                body.audio_quality = document.getElementById('audioQuality').value;
+            }
 
             let data;
             try {
@@ -3554,12 +3594,14 @@
             const textArea = document.querySelector('textarea');
             const voiceSelect = document.querySelector('select[name="voice"]');
             const engineSelect = document.querySelector('select[name="engine"]');
+            const audioQualitySelect = document.getElementById('audioQuality');
 
             return {
                 mode: currentMode,
                 text: textArea?.value || '',
                 voice: voiceSelect?.value || '',
                 engine: engineSelect?.value || '',
+                audio_quality: audioQualitySelect?.value || 'standard',
                 status: currentMode === 'cached' ? 'completed' :
                        currentMode === 'queue' ? 'queue' : 'idle',
                 cache_id: window.currentCacheId || null,
@@ -3598,6 +3640,11 @@
                 const engineSelect = document.querySelector('select[name="engine"]');
                 if (engineSelect) engineSelect.value = session.engine;
             }
+            // Restore audio quality settings
+            if (session.audio_quality) {
+                const audioQualitySelect = document.getElementById('audioQuality');
+                if (audioQualitySelect) audioQualitySelect.value = session.audio_quality;
+            }
 
             // Verify cache if exists
             if (session.status === 'completed' && session.cache_id) {
@@ -3617,13 +3664,19 @@
         function showSessionBanner(description) {
             const banner = document.getElementById('sessionBanner');
             const descEl = document.getElementById('sessionBannerDesc');
-            if (descEl) descEl.textContent = description;
-            if (banner) banner.classList.add('visible');
+            if (descEl) descEl.textContent = description || 'Your previous work has been restored.';
+            if (banner) {
+                banner.classList.add('visible');
+                document.body.classList.add('has-session-banner');
+            }
         }
 
         function dismissSessionBanner() {
             const banner = document.getElementById('sessionBanner');
-            if (banner) banner.classList.remove('visible');
+            if (banner) {
+                banner.classList.remove('visible');
+                document.body.classList.remove('has-session-banner');
+            }
         }
 
         // Check for existing session on page load
@@ -3632,13 +3685,35 @@
             if (session) {
                 showSessionBanner('Phát hiện phiên làm việc trước đó. Khôi phục?');
             }
+
+            // Session banner button handlers
+            const sessionFreshBtn = document.getElementById('sessionFreshBtn');
+            const sessionContinueBtn = document.getElementById('sessionContinueBtn');
+
+            if (sessionFreshBtn) {
+                sessionFreshBtn.addEventListener('click', () => {
+                    clearSession();
+                    dismissSessionBanner();
+                    // Reset UI to fresh state
+                    const textArea = document.querySelector('textarea');
+                    if (textArea) textArea.value = '';
+                    const engineSelect = document.querySelector('select[name="engine"]');
+                    if (engineSelect) engineSelect.value = 'edge';
+                    updateVoiceDropdown();
+                });
+            }
+
+            if (sessionContinueBtn) {
+                sessionContinueBtn.addEventListener('click', () => {
+                    restoreSession();
+                });
+            }
         });
 
         // ---------------------------------------------------------------------------
         // Generation Action Handlers
         // ---------------------------------------------------------------------------
         const btnStop = document.getElementById('btnStop');
-        const btnResume = document.getElementById('btnResume');
         const btnDelete = document.getElementById('btnDelete');
         const generationActions = document.getElementById('generationActions');
 
@@ -3646,11 +3721,17 @@
             if (!window.currentCacheId) return;
 
             try {
-                const res = await fetch(`/tts/stop/${window.currentCacheId}`, { method: 'POST' });
+                const res = await fetch(`/tts/file/${window.currentCacheId}`, { method: 'DELETE' });
                 if (res.ok) {
-                    btnStop.style.display = 'none';
-                    btnResume.style.display = 'inline-block';
-                    btnResume.disabled = false;
+                    // Transform stop button to continue button
+                    if (btnStop) {
+                        btnStop.textContent = '▶ Tiếp Tục';
+                        btnStop.title = 'Tiếp tục tạo audio';
+                        btnStop.classList.remove('btn-stop');
+                        btnStop.classList.add('btn-continue');
+                        btnStop.disabled = false;
+                    }
+                    if (btnDelete) btnDelete.disabled = false;
                 }
             } catch (err) {
                 console.error('Stop failed:', err);
@@ -3660,18 +3741,8 @@
         async function resumeGeneration() {
             if (!window.currentCacheId) return;
 
-            try {
-                const res = await fetch(`/tts/resume/${window.currentCacheId}`, { method: 'POST' });
-                if (res.ok) {
-                    btnResume.style.display = 'none';
-                    btnStop.style.display = 'inline-block';
-                    btnStop.disabled = false;
-                    // Reload page to resume streaming
-                    window.location.href = `/tts/file/${window.currentCacheId}`;
-                }
-            } catch (err) {
-                console.error('Resume failed:', err);
-            }
+            // Navigate to the file page to continue/resume
+            window.location.href = `/tts/file/${window.currentCacheId}`;
         }
 
         async function deleteGeneration() {
@@ -3690,8 +3761,15 @@
             }
         }
 
-        if (btnStop) btnStop.addEventListener('click', stopGeneration);
-        if (btnResume) btnResume.addEventListener('click', resumeGeneration);
+        if (btnStop) {
+            btnStop.addEventListener('click', () => {
+                if (btnStop.classList.contains('btn-continue')) {
+                    resumeGeneration();
+                } else {
+                    stopGeneration();
+                }
+            });
+        }
         if (btnDelete) btnDelete.addEventListener('click', deleteGeneration);
 
         // Show action buttons when generation starts
@@ -3699,7 +3777,15 @@
             window.currentCacheId = cacheId;
             if (generationActions) {
                 generationActions.style.display = 'flex';
-                btnStop.disabled = false;
+                // Reset stop button to initial state
+                if (btnStop) {
+                    btnStop.textContent = '⏸ Dừng';
+                    btnStop.title = 'Dừng tạo (lưu audio một phần)';
+                    btnStop.classList.remove('btn-continue');
+                    btnStop.classList.add('btn-stop');
+                    btnStop.disabled = false;
+                }
+                if (btnDelete) btnDelete.disabled = true;
             }
         }
 

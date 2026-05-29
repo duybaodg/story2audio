@@ -23,7 +23,9 @@ dependencies = [
   # OCR retry for failed extractions
   "pytesseract>=0.3.10",
   "pdf2image>=1.16.0",
-  "Pillow>=9.0.0"
+  "Pillow>=9.0.0",
+  # Redis for rate limiting
+  "redis>=5.0.0"
 ]
 
 [dependency-groups]
