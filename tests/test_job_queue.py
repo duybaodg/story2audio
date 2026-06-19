@@ -183,7 +183,8 @@ def test_recover_orphan_jobs():
     assert "crashed" in job.error.lower()
 
 
-def test_cancel_job():
+@pytest.mark.asyncio
+async def test_cancel_job():
     """Test cancelling a job."""
     # Create a mock document
     doc = Document(

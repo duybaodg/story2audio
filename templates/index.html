@@ -1848,7 +1848,17 @@
 
             // Set title and body
             title.textContent = options.title || '';
-            body.innerHTML = (options.message || '').replace(/\n/g, '<br>');
+            // Use textContent for security, handle line breaks safely
+            body.textContent = '';
+            if (options.message) {
+                const lines = options.message.split('\n');
+                lines.forEach((line, index) => {
+                    if (index > 0) {
+                        body.appendChild(document.createElement('br'));
+                    }
+                    body.appendChild(document.createTextNode(line));
+                });
+            }
 
             // Clear and add actions
             actions.innerHTML = '';

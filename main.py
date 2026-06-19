@@ -33,6 +33,7 @@ from vieneu_audio_quality import (
     get_file_extension,
     AudioQuality,
 )
+from vieneu_model import get_pool_size
 
 load_dotenv()
 
@@ -172,6 +173,7 @@ async def verify_session(cache_id: str):
 # ---------------------------------------------------------------------------
 PROXY = os.getenv("PROXY")
 ENABLE_DEBUG_TTS = os.getenv("ENABLE_DEBUG_TTS", "").lower() in {"1", "true", "yes"}
+VIENEU_MAX_WORKERS = get_pool_size()
 
 if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
@@ -335,6 +337,7 @@ class TTSRequest(BaseModel):
     voice: str = "vi-VN-HoaiMyNeural"
     engine: str = "edge"   # edge | gtts
     language: str = "vi"
+    audio_quality: AudioQuality = "standard"
 
 
 # ---------------------------------------------------------------------------
@@ -344,13 +347,15 @@ def md5_short(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()[:16]
 
 
-def get_cache_id(text: str, voice: str, engine: str, language: str) -> str:
+def get_cache_id(text: str, voice: str, engine: str, language: str, variant: str = "") -> str:
     raw = f"{text}_{voice}_{engine}_{language}"
+    if variant:
+        raw = f"{raw}_{variant}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
-def get_audio_path(cache_id: str) -> str:
-    return os.path.join(CACHE_DIR, f"{cache_id}.mp3")
+def get_audio_path(cache_id: str, extension: str = "mp3") -> str:
+    return os.path.join(CACHE_DIR, f"{cache_id}.{extension}")
 
 
 def get_meta_path(cache_id: str) -> str:
@@ -1667,7 +1672,14 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
 
     voice = validate_voice(language, voice, engine)
 
-    cache_id = get_cache_id(text_to_process, voice, engine, language)
+    audio_quality: AudioQuality = request.audio_quality if engine == "vieneu" else "standard"
+    # The current cache/file endpoints are MP3-only. Keep lossless disabled until
+    # the audio path and response media types support WAV end to end.
+    if audio_quality == "lossless":
+        audio_quality = "high"
+
+    cache_variant = audio_quality if engine == "vieneu" else ""
+    cache_id = get_cache_id(text_to_process, voice, engine, language, cache_variant)
     require_subtitles = engine == "edge"
 
     if is_cache_valid(cache_id, require_subtitles=require_subtitles):
@@ -1717,7 +1729,16 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
         },
     )
 
-    background_tasks.add_task(generate_chunks_sync, text_to_process, voice, engine, cache_id, language, chunk_preview)
+    background_tasks.add_task(
+        generate_chunks_sync,
+        text_to_process,
+        voice,
+        engine,
+        cache_id,
+        language,
+        chunk_preview,
+        audio_quality,
+    )
 
     return {
         "cache_id": cache_id,
