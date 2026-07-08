@@ -24,7 +24,6 @@ from rate_limiter import RateLimiter
 import edge_tts
 from gtts import gTTS
 from dotenv import load_dotenv
-from file_processor import register_cleanup_task
 from document_api import router as document_router
 
 # Audio quality imports
@@ -34,6 +33,12 @@ from vieneu_audio_quality import (
     AudioQuality,
 )
 from vieneu_model import get_pool_size
+from tts_queue import (
+    TTSQueueError,
+    enqueue_vieneu_tts_job,
+    is_vieneu_cancelled_sync,
+    request_vieneu_cancel,
+)
 
 load_dotenv()
 
@@ -60,7 +65,7 @@ if sys.platform == "win32":
 # ---------------------------------------------------------------------------
 # Directories & Setup
 # ---------------------------------------------------------------------------
-VERSION = os.environ.get("APP_VERSION", "v3.0.0")
+VERSION = os.environ.get("APP_VERSION", "v4.0.0")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -174,6 +179,10 @@ async def verify_session(cache_id: str):
 PROXY = os.getenv("PROXY")
 ENABLE_DEBUG_TTS = os.getenv("ENABLE_DEBUG_TTS", "").lower() in {"1", "true", "yes"}
 VIENEU_MAX_WORKERS = get_pool_size()
+TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS = int(os.getenv("TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS", "300"))
+VIENEU_INIT_IN_WEB = os.getenv("VIENEU_INIT_IN_WEB", "").lower() in {"1", "true", "yes"}
+ENABLE_GLOBAL_CACHE_CLEAR = os.getenv("ENABLE_GLOBAL_CACHE_CLEAR", "").lower() in {"1", "true", "yes"}
+AUDIO_CACHE_RETENTION_HOURS = int(os.getenv("AUDIO_CACHE_RETENTION_HOURS", "12"))
 
 if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
@@ -194,45 +203,28 @@ def request_cancellation(cache_id: str) -> bool:
 
 def is_cancelled(cache_id: str) -> bool:
     """Check and consume cancellation flag."""
-    return _cancellation_requests.pop(cache_id, False)
+    if _cancellation_requests.pop(cache_id, False):
+        return True
+    return is_vieneu_cancelled_sync(cache_id)
 
 # ---------------------------------------------------------------------------
 # Language & Voice Registry
 # ---------------------------------------------------------------------------
 
 def _load_vieneu_voices() -> List[Dict[str, str]]:
-    """Load VieNeu preset voices from local voices.json file.
-
-    Returns all 6 preset voices:
-    - Binh (nam miền Bắc) - default
-    - Tuyen (nam miền Bắc)
-    - Vinh (nam miền Nam)
-    - Doan (nữ miền Nam)
-    - Ly (nữ miền Bắc)
-    - Ngoc (nữ miền Bắc)
-    """
+    """Load VieNeu preset voices from local voices.json file."""
     try:
         from vieneu_model import get_preset_voices_from_file
 
         available = get_preset_voices_from_file()
         voices = [
-            {"value": "vieneu:default", "label": "Mặc định [VieNeu]", "engine": "vieneu"}
+            {"value": "vieneu:default", "label": "Mặc định [VieNeu v3 Turbo]", "engine": "vieneu"}
         ]
 
         for desc, name in available:
-            # Map voice IDs to user-friendly labels
-            voice_labels = {
-                "Binh": "Bình (nam miền Bắc) [VieNeu]",
-                "Tuyen": "Tuyền - Bác sĩ (nam miền Bắc) [VieNeu]",
-                "Vinh": "Vinh (nam miền Nam) [VieNeu]",
-                "Doan": "Doãn (nữ miền Nam) [VieNeu]",
-                "Ly": "Ly (nữ miền Bắc) [VieNeu]",
-                "Ngoc": "Ngọc (nữ miền Bắc) [VieNeu]",
-            }
-            label = voice_labels.get(name, f"{desc} [VieNeu]")
             voices.append({
                 "value": f"vieneu:{name}",
-                "label": label,
+                "label": f"{desc} [VieNeu v3 Turbo]",
                 "engine": "vieneu"
             })
 
@@ -380,7 +372,7 @@ def get_cues_jsonl_path(cache_id: str) -> str:
 
 def save_cache_meta(cache_id: str, data: dict) -> None:
     meta_path = get_meta_path(cache_id)
-    tmp_path = meta_path + ".tmp"
+    tmp_path = f"{meta_path}.tmp.{os.getpid()}.{threading.get_ident()}"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
     os.replace(tmp_path, meta_path)
@@ -412,6 +404,7 @@ def cleanup_incomplete_cache(cache_id: str) -> None:
     """Xóa toàn bộ file cache (audio, meta, subtitle, cues). Best-effort."""
     paths = [
         get_audio_path(cache_id),
+        get_audio_path(cache_id, "wav"),
         get_meta_path(cache_id),
         get_srt_path(cache_id),
         get_vtt_path(cache_id),
@@ -424,6 +417,61 @@ def cleanup_incomplete_cache(cache_id: str) -> None:
             "cleanup_incomplete_cache(%s): không thể xóa %d file: %s",
             cache_id, len(failed), failed,
         )
+
+
+def cleanup_old_audio_cache(retention_hours: int = AUDIO_CACHE_RETENTION_HOURS) -> int:
+    """Delete completed/failed audio cache entries older than retention_hours."""
+    if not os.path.exists(CACHE_DIR):
+        return 0
+
+    cutoff = time.time() - retention_hours * 3600
+    cache_ids = set()
+    deleted = 0
+
+    for filename in os.listdir(CACHE_DIR):
+        match = re.match(r"^([a-f0-9]{32})(?:\.|$)", filename)
+        if match:
+            cache_ids.add(match.group(1))
+            continue
+
+        path = os.path.join(CACHE_DIR, filename)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff and remove_if_exists(path):
+                deleted += 1
+        except OSError:
+            continue
+
+    for cache_id in cache_ids:
+        meta = load_cache_meta(cache_id) or {}
+        if meta.get("status") in {"queued", "processing", "generating"}:
+            continue
+
+        paths = [
+            get_audio_path(cache_id),
+            get_audio_path(cache_id, "wav"),
+            get_meta_path(cache_id),
+            get_srt_path(cache_id),
+            get_vtt_path(cache_id),
+            get_cues_json_path(cache_id),
+            get_cues_jsonl_path(cache_id),
+        ]
+        existing = [path for path in paths if os.path.exists(path)]
+        if not existing:
+            continue
+
+        try:
+            newest_mtime = max(os.path.getmtime(path) for path in existing)
+        except OSError:
+            continue
+        if newest_mtime >= cutoff:
+            continue
+
+        before = sum(1 for path in existing if os.path.exists(path))
+        cleanup_incomplete_cache(cache_id)
+        after = sum(1 for path in existing if os.path.exists(path))
+        deleted += before - after
+
+    return deleted
 
 
 def remove_runtime_files_only(cache_id: str) -> None:
@@ -480,7 +528,7 @@ def get_effective_status(cache_id: str) -> Optional[dict]:
     file_size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
 
     in_mem = generation_status.get(cache_id)
-    if in_mem and in_mem.get("status") in {"queued", "processing"}:
+    if in_mem and in_mem.get("status") in {"queued", "processing", "generating", "stopped"}:
         status = dict(in_mem)
         status["file_size"] = file_size
         return status
@@ -813,6 +861,16 @@ def split_text_into_chunks(text: str, language: str = "vi") -> List[str]:
     return [c for c in chunks if c.strip()]
 
 
+def split_text_for_engine(text: str, engine: str, language: str = "vi") -> List[str]:
+    """Return app-level chunks; VieNeu handles its own TTS chunking internally."""
+    text = normalize_text(text)
+    if not text:
+        return []
+    if engine == "vieneu":
+        return [text]
+    return split_text_into_chunks(text, language=language)
+
+
 def validate_language(language: str) -> str:
     language = (language or "vi").lower().strip()
     if language not in SUPPORTED_LANGUAGES:
@@ -845,6 +903,16 @@ def validate_voice(language: str, voice: str, engine: str) -> str:
                 status_code=400,
                 detail=f"VieNeu voice must start with 'vieneu:'",
             )
+        preset_id = voice.split(":", 1)[1]
+        if preset_id != "default":
+            from vieneu_model import get_preset_voices_from_file
+
+            valid = {name for _desc, name in get_preset_voices_from_file()}
+            if preset_id not in valid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported VieNeu voice: {preset_id}",
+                )
         return voice
 
     all_voices = get_all_voices()
@@ -1147,6 +1215,30 @@ async def edge_tts_to_audio_and_words(text: str, voice: str) -> Tuple[bytes, Lis
     return b"".join(audio_parts), words
 
 
+def resolve_vieneu_voice_arg(tts, voice: str):
+    """Return an SDK voice argument for VieNeu v3/v2, or None for default."""
+    if not voice or voice == "vieneu:default":
+        return None
+
+    preset_id = voice.split(":", 1)[1] if voice.startswith("vieneu:") else voice
+    if not preset_id:
+        return None
+
+    try:
+        available = tts.list_preset_voices()
+        for desc, name in available:
+            if preset_id in {desc, name}:
+                try:
+                    return tts.get_preset_voice(name)
+                except Exception:
+                    return name
+    except Exception:
+        pass
+
+    # VieNeu v3 Turbo accepts built-in voice names directly, e.g. "Ngọc Lan".
+    return preset_id
+
+
 async def vieneu_tts_to_audio(
     text: str,
     voice: str,
@@ -1169,20 +1261,6 @@ async def vieneu_tts_to_audio(
     """
     from vieneu_model import get_vieneu_model
 
-    # Handle preset voices - need to get them before entering context
-    preset_voice = None
-    with get_vieneu_model() as tts:
-        if voice != "vieneu:default":
-            preset_id = voice.split(":", 1)[1]
-            try:
-                available = tts.list_preset_voices()
-                for desc, name in available:
-                    if name == preset_id:
-                        preset_voice = tts.get_preset_voice(name)
-                        break
-            except Exception:
-                pass  # Fall back to default voice if preset lookup fails
-
     # Run in thread pool since VieNeu is synchronous
     loop = asyncio.get_running_loop()
 
@@ -1190,8 +1268,9 @@ async def vieneu_tts_to_audio(
         # Acquire model lock for inference
         with get_vieneu_model() as tts:
             try:
-                if preset_voice:
-                    audio_array = tts.infer(text=text, voice=preset_voice)
+                voice_arg = resolve_vieneu_voice_arg(tts, voice)
+                if voice_arg:
+                    audio_array = tts.infer(text=text, voice=voice_arg)
                 else:
                     audio_array = tts.infer(text=text)
 
@@ -1233,25 +1312,12 @@ def vieneu_tts_to_audio_sync(
     """
     from vieneu_model import get_vieneu_model
 
-    # Handle preset voices - need to get them before entering context
-    preset_voice = None
-    with get_vieneu_model() as tts:
-        if voice != "vieneu:default":
-            preset_id = voice.split(":", 1)[1]
-            try:
-                available = tts.list_preset_voices()
-                for desc, name in available:
-                    if name == preset_id:
-                        preset_voice = tts.get_preset_voice(name)
-                        break
-            except Exception:
-                pass  # Fall back to default voice if preset lookup fails
-
     # Acquire model lock for inference
     with get_vieneu_model() as tts:
         try:
-            if preset_voice:
-                audio_array = tts.infer(text=text, voice=preset_voice)
+            voice_arg = resolve_vieneu_voice_arg(tts, voice)
+            if voice_arg:
+                audio_array = tts.infer(text=text, voice=voice_arg)
             else:
                 audio_array = tts.infer(text=text)
 
@@ -1378,7 +1444,7 @@ async def generate_chunks(
             return
 
         if chunks is None:
-            chunks = split_text_into_chunks(text, language=language)
+            chunks = split_text_for_engine(text, engine=engine, language=language)
 
         if not chunks:
             err = "Text must not be empty"
@@ -1510,13 +1576,6 @@ async def generate_chunks(
 
                 if engine == "edge":
                     new_cues = group_word_boundaries_to_cues(words, global_audio_sec, language)
-                    for cue in new_cues:
-                        cue_index += 1
-                        cue["index"] = cue_index
-
-                    cues_all.extend(new_cues)
-                    append_cues_jsonl(cache_id, new_cues)
-                    generation_status[cache_id]["subtitle_cues"] = len(cues_all)
                     for cue in new_cues:
                         cue_index += 1
                         cue["index"] = cue_index
@@ -1692,7 +1751,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
         }
 
     current = get_effective_status(cache_id)
-    if current and current.get("status") in {"queued", "processing"}:
+    if current and current.get("status") in {"queued", "processing", "generating"}:
         return {
             "cache_id": cache_id,
             "status": current.get("status"),
@@ -1703,42 +1762,66 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
     if os.path.exists(get_audio_path(cache_id)) or os.path.exists(get_meta_path(cache_id)):
         cleanup_incomplete_cache(cache_id)
 
-    chunk_preview = split_text_into_chunks(text_to_process, language=language)
+    chunk_preview = split_text_for_engine(text_to_process, engine=engine, language=language)
 
-    generation_status[cache_id] = {
+    queued_meta = {
         "status": "queued",
         "progress": 0,
         "total": len(chunk_preview),
+        "text_hash": md5_short(text_to_process),
+        "voice": voice,
+        "engine": engine,
+        "language": language,
         "subtitle_supported": engine == "edge",
         "subtitle_ready": False,
         "subtitle_cues": 0,
     }
-    save_cache_meta(
-        cache_id,
-        {
+
+    if engine == "vieneu":
+        save_cache_meta(cache_id, queued_meta)
+        try:
+            await enqueue_vieneu_tts_job(
+                {
+                    "text": text_to_process,
+                    "voice": voice,
+                    "engine": engine,
+                    "cache_id": cache_id,
+                    "language": language,
+                    "chunks": chunk_preview,
+                    "audio_quality": audio_quality,
+                }
+            )
+        except TTSQueueError as exc:
+            save_cache_meta(
+                cache_id,
+                {
+                    **queued_meta,
+                    "status": "failed",
+                    "error": str(exc),
+                },
+            )
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    else:
+        generation_status[cache_id] = {
             "status": "queued",
             "progress": 0,
             "total": len(chunk_preview),
-            "text_hash": md5_short(text_to_process),
-            "voice": voice,
-            "engine": engine,
-            "language": language,
             "subtitle_supported": engine == "edge",
             "subtitle_ready": False,
             "subtitle_cues": 0,
-        },
-    )
+        }
+        save_cache_meta(cache_id, queued_meta)
 
-    background_tasks.add_task(
-        generate_chunks_sync,
-        text_to_process,
-        voice,
-        engine,
-        cache_id,
-        language,
-        chunk_preview,
-        audio_quality,
-    )
+        background_tasks.add_task(
+            generate_chunks_sync,
+            text_to_process,
+            voice,
+            engine,
+            cache_id,
+            language,
+            chunk_preview,
+            audio_quality,
+        )
 
     return {
         "cache_id": cache_id,
@@ -1765,6 +1848,7 @@ async def delete_audio(cache_id: str):
 
     # Check if generation is in progress
     in_progress = cache_id in generation_status
+    status_info = get_effective_status(cache_id)
 
     if in_progress:
         # Request cancellation
@@ -1772,6 +1856,24 @@ async def delete_audio(cache_id: str):
             return {"status": "cancelling", "message": "Generation cancellation requested"}
         else:
             raise HTTPException(status_code=404, detail="Generation not found")
+    elif (
+        status_info
+        and status_info.get("engine") == "vieneu"
+        and status_info.get("status") in {"queued", "processing", "generating"}
+    ):
+        try:
+            await request_vieneu_cancel(cache_id)
+        except TTSQueueError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        save_cache_meta(
+            cache_id,
+            {
+                **status_info,
+                "status": "stopped",
+                "error": "Cancellation requested",
+            },
+        )
+        return {"status": "cancelling", "message": "VieNeu generation cancellation requested"}
     else:
         # Delete completed audio file
         cleanup_incomplete_cache(cache_id)
@@ -1781,6 +1883,9 @@ async def delete_audio(cache_id: str):
 @app.delete("/tts/cache")
 async def clear_all_cache():
     """Clear all audio cache files."""
+    if not ENABLE_GLOBAL_CACHE_CLEAR:
+        raise HTTPException(status_code=404, detail="Not found")
+
     if not os.path.exists(CACHE_DIR):
         return {"status": "cleared", "deleted": 0}
 
@@ -2031,42 +2136,24 @@ async def stream_audio_live(cache_id: str):
     cache_id = validate_cache_id(cache_id)
     audio_path = get_audio_path(cache_id)
 
-    # Chờ đến khi có byte đầu tiên
-    for _ in range(300):  # ~30 giây (increased from 15s for VieNeu cold start)
-        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-            break
-
-        st = get_effective_status(cache_id)
-        if st and st.get("status") == "failed":
-            err = st.get("error", "generation failed")
-            logger.warning(f"Stream failed for {cache_id}: {err}")
-            raise HTTPException(status_code=503, detail=f"Generation failed: {err}")
-
-        await asyncio.sleep(0.1)
-    else:
-        st = get_effective_status(cache_id)
-        state = st.get("status") if st else None
-        file_exists = os.path.exists(audio_path)
-        file_size = os.path.getsize(audio_path) if file_exists else 0
-
-        if st and st.get("status") == "failed":
-            err = st.get("error", "generation failed")
-            logger.warning(f"Stream timeout for {cache_id}: status=failed, error={err}")
-            raise HTTPException(status_code=503, detail=f"Generation failed: {err}")
-        if st and st.get("status") in {"queued", "processing", "generating"}:
-            logger.warning(f"Stream timeout for {cache_id}: status={state}, file_exists={file_exists}, file_size={file_size}")
-            raise HTTPException(
-                status_code=503,
-                detail="Audio is still being generated, retry later.",
-                headers={"Retry-After": "5"},
-            )
-        logger.warning(f"Stream timeout for {cache_id}: status={state}, file_exists={file_exists}, file_size={file_size}")
+    st = get_effective_status(cache_id)
+    state = st.get("status") if st else None
+    if not st:
+        raise HTTPException(status_code=404, detail="Audio not ready")
+    if state == "failed":
+        err = st.get("error", "generation failed")
+        logger.warning(f"Stream failed for {cache_id}: {err}")
+        raise HTTPException(status_code=503, detail=f"Generation failed: {err}")
+    if state == "completed" and (
+        not os.path.exists(audio_path) or os.path.getsize(audio_path) <= 0
+    ):
         raise HTTPException(status_code=404, detail="Audio not ready")
 
     async def generate() -> AsyncGenerator[bytes, None]:
         read_size = 64 * 1024
         sent = 0
         stable_completed_checks = 0
+        first_byte_started_at = time.time()
 
         while True:
             if os.path.exists(audio_path):
@@ -2085,7 +2172,9 @@ async def stream_audio_live(cache_id: str):
             st = get_effective_status(cache_id)
             state = st.get("status") if st else None
 
-            if state == "failed":
+            if state in {"failed", "stopped"}:
+                break
+            if state is None:
                 break
 
             if state == "completed":
@@ -2096,6 +2185,15 @@ async def stream_audio_live(cache_id: str):
                         break
                 else:
                     stable_completed_checks = 0
+
+            if sent == 0 and time.time() - first_byte_started_at >= TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS:
+                logger.warning(
+                    "Stream first-byte timeout for %s: status=%s, file_exists=%s",
+                    cache_id,
+                    state,
+                    os.path.exists(audio_path),
+                )
+                break
 
             await asyncio.sleep(0.2)
 
@@ -2157,24 +2255,26 @@ async def health():
 @app.on_event("startup")
 async def startup_event():
     """Register background cleanup task on startup and recover orphan jobs."""
-    from fastapi import BackgroundTasks
-    background_tasks = BackgroundTasks()
-    register_cleanup_task(background_tasks)
-    logger.info("Document upload cleanup task registered")
+    from file_processor import start_cleanup_scheduler
+    asyncio.create_task(start_cleanup_scheduler())
+    logger.info("Document upload cleanup task started")
 
     # Initialize rate limiter
     await rate_limiter.initialize()
     app.state.rate_limiter = rate_limiter
     logger.info("Rate limiter initialized")
 
-    # Initialize VieNeu model pool (critical for TTS generation)
-    from vieneu_model import initialize_model_pool
-    try:
-        initialize_model_pool()
-        logger.info("VieNeu model pool initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize VieNeu model pool: {e}")
-        # Don't fail startup - other engines (Edge, gTTS) still work
+    if VIENEU_INIT_IN_WEB:
+        # Usually disabled in production: the separate worker owns the heavy model.
+        from vieneu_model import initialize_model_pool
+        try:
+            initialize_model_pool()
+            logger.info("VieNeu model pool initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize VieNeu model pool: {e}")
+            # Don't fail startup - other engines (Edge, gTTS) still work
+    else:
+        logger.info("VieNeu model initialization skipped in web process")
 
     # Recover orphan jobs from previous run
     from job_queue import recover_orphan_jobs
@@ -2203,6 +2303,13 @@ async def periodic_job_cleanup():
                 logger.info(f"Cleaned up {deleted} old job files")
         except Exception as e:
             logger.error(f"Job cleanup error: {e}")
+
+        try:
+            deleted = cleanup_old_audio_cache()
+            if deleted > 0:
+                logger.info(f"Cleaned up {deleted} old audio cache files")
+        except Exception as e:
+            logger.error(f"Audio cache cleanup error: {e}")
 
         # Run every hour
         await asyncio.sleep(3600)

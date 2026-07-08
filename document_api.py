@@ -10,6 +10,7 @@ from file_processor import (
     initiate_upload,
     receive_chunk,
     complete_upload,
+    get_expected_chunk_size,
     get_document,
     get_queue,
     delete_document,
@@ -32,6 +33,44 @@ class ChapterContentRequest(BaseModel):
 
 
 router = APIRouter(prefix="/document", tags=["document"])
+_CHUNK_READ_SIZE = 1024 * 1024
+_MAX_CONCURRENT_CHUNKS_PER_UPLOAD = 5
+_chunk_lock = asyncio.Lock()
+_active_chunk_counts: dict[str, int] = {}
+
+
+async def _read_upload_chunk(chunk: UploadFile, expected_size: int) -> bytes:
+    data = bytearray()
+    while True:
+        part = await chunk.read(_CHUNK_READ_SIZE)
+        if not part:
+            break
+        data.extend(part)
+        if len(data) > expected_size:
+            raise ValueError(
+                f"Chunk size exceeds expected {expected_size} bytes"
+            )
+    return bytes(data)
+
+
+async def _reserve_chunk_slot(upload_id: str) -> None:
+    async with _chunk_lock:
+        current = _active_chunk_counts.get(upload_id, 0)
+        if current >= _MAX_CONCURRENT_CHUNKS_PER_UPLOAD:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many concurrent chunks for this upload"
+            )
+        _active_chunk_counts[upload_id] = current + 1
+
+
+async def _release_chunk_slot(upload_id: str) -> None:
+    async with _chunk_lock:
+        current = _active_chunk_counts.get(upload_id, 0)
+        if current <= 1:
+            _active_chunk_counts.pop(upload_id, None)
+        else:
+            _active_chunk_counts[upload_id] = current - 1
 
 @router.get("/health")
 async def health_check():
@@ -64,6 +103,10 @@ async def upload_initiate(
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except OSError:
+        raise HTTPException(status_code=507, detail="Upload storage error")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Upload initiation failed")
 
 @router.post("/upload/chunk")
 async def upload_chunk(
@@ -76,8 +119,10 @@ async def upload_chunk(
 
     Returns success status and next chunk number.
     """
+    await _reserve_chunk_slot(upload_id)
     try:
-        chunk_data = await chunk.read()
+        expected_size = get_expected_chunk_size(upload_id, chunk_number)
+        chunk_data = await _read_upload_chunk(chunk, expected_size)
         success = await receive_chunk(upload_id, chunk_number, chunk_data)
 
         # Calculate next expected chunk
@@ -97,6 +142,14 @@ async def upload_chunk(
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except OSError:
+        raise HTTPException(status_code=507, detail="Upload storage error")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Chunk upload failed")
+    finally:
+        await _release_chunk_slot(upload_id)
 
 @router.post("/upload/complete")
 async def upload_complete(upload_id: str = Form(...)):
@@ -123,6 +176,10 @@ async def upload_complete(upload_id: str = Form(...)):
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except OSError:
+        raise HTTPException(status_code=507, detail="Upload storage error")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Upload completion failed")
 
 @router.get("/queue")
 async def get_document_queue():

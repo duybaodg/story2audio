@@ -42,6 +42,7 @@ class ExtractionJob(BaseModel):
 # In-memory job tracking
 _active_jobs: Dict[str, Future] = {}
 _jobs_lock = threading.Lock()
+_job_files_lock = threading.Lock()
 
 
 # Job storage paths
@@ -55,23 +56,29 @@ def _ensure_jobs_dir():
 
 def _save_job(job: ExtractionJob):
     _ensure_jobs_dir()
-    with open(_get_job_path(job.job_id), 'w') as f:
-        json.dump(job.model_dump(), f, default=str)
+    path = _get_job_path(job.job_id)
+    tmp_path = f"{path}.tmp.{threading.get_ident()}"
+    with _job_files_lock:
+        with open(tmp_path, 'w') as f:
+            json.dump(job.model_dump(), f, default=str)
+        os.replace(tmp_path, path)
 
 
 def _load_job(job_id: str) -> Optional[ExtractionJob]:
     path = _get_job_path(job_id)
-    if not os.path.exists(path):
-        return None
-    with open(path, 'r') as f:
-        data = json.load(f)
-        return ExtractionJob(**data)
+    with _job_files_lock:
+        if not os.path.exists(path):
+            return None
+        with open(path, 'r') as f:
+            data = json.load(f)
+    return ExtractionJob(**data)
 
 
 def _delete_job_file(job_id: str):
     path = _get_job_path(job_id)
-    if os.path.exists(path):
-        os.remove(path)
+    with _job_files_lock:
+        if os.path.exists(path):
+            os.remove(path)
 
 
 # Worker pool

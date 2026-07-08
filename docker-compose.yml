@@ -27,20 +27,32 @@ services:
       TZ: Asia/Tokyo
       PYTHONUNBUFFERED: "1"
       PYTHONWARNINGS: "ignore::SyntaxWarning"  # Suppress pydub library warnings
+      ENABLE_DEBUG_TTS: "false"
       DOCUMENT_STORAGE_PATH: /app/documents
-      # Configure VieNeu parallel processing workers (default: 1 for sequential processing)
-      # llama.cpp is not thread-safe, so we use sequential processing
+      JOBS_DIR: /app/jobs
+      MAX_WORKERS: "2"
+      JOB_TIMEOUT_MINUTES: "30"
+      JOB_RETENTION_HOURS: "24"
+      UPLOAD_SESSION_EXPIRY_HOURS: "12"
+      AUDIO_CACHE_RETENTION_HOURS: "12"
+      # Web process should not load the heavy VieNeu model. The worker owns it.
+      VIENEU_INIT_IN_WEB: "false"
       VIENEU_MAX_WORKERS: "1"
+      # v3 Turbo is the default. It auto-selects CPU ONNX or GPU PyTorch.
+      VIENEU_MODE: "${VIENEU_MODE:-v3_turbo}"
+      VIENEU_SAMPLE_RATE: "${VIENEU_SAMPLE_RATE:-48000}"
       # Redis connection for rate limiting
       REDIS_URL: "redis://redis:6379"
+      TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS: "${TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS:-300}"
       # Hugging Face token for faster model downloads (optional)
       # Get free token at: https://huggingface.co/settings/tokens
       HF_TOKEN: "${HF_TOKEN:-}"
     ports:
-      - "8000:8000"
+      - "${APP_PORT:-8000}:8000"
     volumes:
       - story2audio_cache:/app/audio_cache
       - story2audio_documents:/app/documents
+      - story2audio_jobs:/app/jobs
       - story2audio_models:/root/.cache/huggingface  # VieNeu model cache (1-2GB)
     # Resource limits (optional - uncomment for production)
     # deploy:
@@ -52,14 +64,54 @@ services:
     #       cpus: '2'      # Guarantee 2 cores
     #       memory: 2G     # Guarantee 2GB memory
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"]
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 20s
 
+  vieneu-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: story2audio_vieneu_worker
+    restart: unless-stopped
+    command: ["/app/.venv/bin/python", "tts_worker.py"]
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Tokyo
+      PYTHONUNBUFFERED: "1"
+      PYTHONWARNINGS: "ignore::SyntaxWarning"
+      DOCUMENT_STORAGE_PATH: /app/documents
+      JOBS_DIR: /app/jobs
+      MAX_WORKERS: "1"
+      REDIS_URL: "redis://redis:6379"
+      VIENEU_MAX_WORKERS: "1"
+      VIENEU_MODE: "${VIENEU_MODE:-v3_turbo}"
+      VIENEU_SAMPLE_RATE: "${VIENEU_SAMPLE_RATE:-48000}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - story2audio_cache:/app/audio_cache
+      - story2audio_documents:/app/documents
+      - story2audio_jobs:/app/jobs
+      - story2audio_models:/root/.cache/huggingface
+    # Keep one worker for VieNeu on small servers. Add replicas only with enough RAM.
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '3'
+    #       memory: 6G
+    #     reservations:
+    #       cpus: '1'
+    #       memory: 4G
+
 volumes:
   story2audio_cache:
   story2audio_documents:
+  story2audio_jobs:
   story2audio_models:  # VieNeu TTS model cache (persists across restarts)
   story2audio_redis:  # Redis rate limiter data

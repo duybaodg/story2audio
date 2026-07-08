@@ -37,7 +37,7 @@ class Document(BaseModel):
     file_type: FileType
     file_size: int
     upload_date: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    expires_at: datetime = Field(default_factory=lambda: datetime.now(UTC) + timedelta(hours=24))
+    expires_at: datetime = Field(default_factory=lambda: datetime.now(UTC) + timedelta(hours=12))
     status: DocumentStatus = DocumentStatus.UPLOADING
     total_pages: Optional[int] = None
     total_chapters: Optional[int] = None

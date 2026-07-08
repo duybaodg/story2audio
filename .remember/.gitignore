@@ -1,0 +1,5 @@
+# Ignore all memory files except .gitignore itself
+*
+!.gitignore
+!logs/
+!tmp/

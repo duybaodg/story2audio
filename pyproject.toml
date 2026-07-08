@@ -1,6 +1,6 @@
 [project]
 name = "story2audio"
-version = "3.0.0"
+version = "4.0.0"
 description = "Ứng dụng FastAPI chuyển văn bản thành audio MP3 với streaming, cache và phụ đề trực tiếp (Live Subtitles)"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -17,7 +17,7 @@ dependencies = [
   "python-magic>=0.4.27",  # For future file type validation (MVP: not yet used)
   "python-multipart>=0.0.26",
   # VieNeu-TTS for Vietnamese text-to-speech
-  "vieneu>=0.1.0",
+  "vieneu>=3.0.0",
   # Audio quality enhancements
   "pydub>=0.25.1",
   # OCR retry for failed extractions

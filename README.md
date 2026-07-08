@@ -108,13 +108,40 @@ docker compose up -d --build
 ```
 Truy cập `http://localhost:8000` để sử dụng.
 
+Compose chạy 3 service:
+- `app`: FastAPI/UI/API, không tải model VieNeu nặng.
+- `vieneu-worker`: xử lý VieNeu-TTS tuần tự từ Redis queue.
+- `redis`: rate limit upload và queue cho VieNeu jobs.
+
+Thiết lập tối thiểu khuyến nghị cho VPS nhỏ:
+
+```env
+MAX_WORKERS=1
+VIENEU_INIT_IN_WEB=false
+VIENEU_MAX_WORKERS=1
+VIENEU_MODE=v3_turbo
+VIENEU_SAMPLE_RATE=48000
+TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS=300
+```
+
+Với cấu hình này, chỉ nên chạy **1 VieNeu job tại một thời điểm**. Người dùng khác vẫn có thể mở web, xem trạng thái, tải audio cache, hoặc dùng Edge/gTTS nhẹ hơn.
+
+Xem thêm:
+- [`docs/redis-vieneu-queue.md`](docs/redis-vieneu-queue.md) — Redis hoạt động với VieNeu như thế nào.
+- [`docs/project-structure.md`](docs/project-structure.md) — cấu trúc project và vai trò từng file chính.
+- [`docs/azure-deployment.md`](docs/azure-deployment.md) — quản lý version và kiến trúc Azure.
+- [`docs/azure-deploy-plan.md`](docs/azure-deploy-plan.md) — checklist triển khai Azure từng bước.
+
 **Cài đặt thủ công:**
 ```bash
 # Cài đặt dependency
-pip install fastapi edge-tts gtts python-dotenv "uvicorn[standard]"
+pip install fastapi edge-tts gtts python-dotenv redis vieneu "uvicorn[standard]"
 
 # Chạy server
 uvicorn main:app --host 0.0.0.0 --port 8000
+
+# Terminal khác: chạy worker VieNeu nếu dùng engine VieNeu
+python tts_worker.py
 ```
 
 ### Tùy chỉnh
@@ -126,6 +153,34 @@ PROXY=http://user:password@proxy-host:8080   # Proxy nếu cần
 HOST=0.0.0.0
 PORT=8000
 ENABLE_DEBUG_TTS=false                          # Bật debug trên production
+```
+
+VieNeu mặc định chạy bằng **VieNeu-TTS v3 Turbo** với audio 48 kHz, voice built-in và tự chọn CPU ONNX hoặc GPU PyTorch theo môi trường:
+
+```env
+VIENEU_MODE=v3_turbo
+VIENEU_SAMPLE_RATE=48000
+```
+
+Nếu cần quay về model v2 cũ, có thể dùng:
+
+```env
+VIENEU_MODE=v2_standard
+```
+
+Hoặc v2 Turbo CPU:
+
+```env
+VIENEU_MODE=v2_turbo
+VIENEU_DEVICE=cpu
+```
+
+Hoặc v2 Turbo GPU nếu chạy trên NVIDIA GPU và đã có CUDA/LMDeploy phù hợp:
+
+```env
+VIENEU_MODE=v2_turbo_gpu
+VIENEU_DEVICE=cuda
+VIENEU_TURBO_BACKEND=lmdeploy
 ```
 
 ---
@@ -146,6 +201,13 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 2. Chọn loại **Docker Compose**.
 3. Cấu hình biến môi trường (nếu cần).
 4. Nhấn **Deploy**.
+
+### Quản lý version và Azure
+Khuyến nghị dùng cùng một version cho `pyproject.toml`, Git tag và Docker image tag, ví dụ `v4.0.0`. Nếu triển khai lên Azure, dùng kiến trúc `app` + `vieneu-worker` + Redis + Azure Files như mô tả trong [`docs/azure-deployment.md`](docs/azure-deployment.md), rồi làm theo runbook [`docs/azure-deploy-plan.md`](docs/azure-deploy-plan.md).
+
+### Tài liệu kỹ thuật
+- [`docs/project-structure.md`](docs/project-structure.md) — bản đồ cấu trúc source code, runtime data, test và service.
+- [`docs/redis-vieneu-queue.md`](docs/redis-vieneu-queue.md) — luồng Redis queue, worker, cancellation và recovery cho VieNeu.
 
 ---
 

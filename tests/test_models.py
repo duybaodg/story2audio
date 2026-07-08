@@ -27,7 +27,7 @@ def test_document_creation_defaults():
     assert doc.document_id
     assert doc.status == DocumentStatus.UPLOADING
     assert doc.expires_at > datetime.now(UTC)
-    assert doc.expires_at < datetime.now(UTC) + timedelta(hours=25)
+    assert doc.expires_at < datetime.now(UTC) + timedelta(hours=13)
     assert doc.extraction_progress == 0.0
 
 def test_chapter_creation():

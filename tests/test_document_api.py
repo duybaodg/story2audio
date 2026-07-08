@@ -5,6 +5,7 @@ import hashlib
 import os
 import sys
 import tempfile
+import time
 from fastapi.testclient import TestClient
 
 # Add parent directory to path for imports
@@ -13,6 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # Set environment variable before importing modules
 os.environ['DOCUMENT_STORAGE_PATH'] = tempfile.mkdtemp()
 
+import main
 from main import app
 from document_api import router
 app.include_router(router)
@@ -25,7 +27,7 @@ def test_upload_initiate():
         data={
             "filename": "test.pdf",
             "file_size": 10485760,
-            "checksum": "abc123"
+            "checksum": "0" * 32
         }
     )
     assert response.status_code == 200
@@ -41,7 +43,7 @@ def test_upload_chunk():
         data={
             "filename": "chunked.pdf",
             "file_size": 10485760,
-            "checksum": "abc123"
+            "checksum": "0" * 32
         }
     )
     upload_id = initiate_response.json()["upload_id"]
@@ -57,6 +59,27 @@ def test_upload_chunk():
     data = response.json()
     assert data["success"] is True
     assert data["chunk_number"] == 0
+
+
+def test_upload_chunk_rejects_oversized_body():
+    initiate_response = client.post(
+        "/document/upload/initiate",
+        data={
+            "filename": "oversized.pdf",
+            "file_size": 10,
+            "checksum": "0" * 32
+        }
+    )
+    upload_id = initiate_response.json()["upload_id"]
+
+    response = client.post(
+        "/document/upload/chunk",
+        data={"upload_id": upload_id, "chunk_number": 0},
+        files={"chunk": ("chunk_0", b"x" * 11, "application/octet-stream")}
+    )
+
+    assert response.status_code == 400
+    assert "exceeds expected" in response.json()["detail"]
 
 def test_health_check():
     response = client.get("/document/health")
@@ -92,3 +115,91 @@ def test_tts_with_chapters():
         data = response.json()
         assert "cache_id" in data
         assert "status" in data
+
+
+def test_tts_stream_active_generation_waits_without_503(monkeypatch):
+    """Active generation without first bytes should open a stream instead of returning 503."""
+    cache_id = "a" * 32
+    audio_path = main.get_audio_path(cache_id)
+    monkeypatch.setattr(main, "TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS", 0)
+
+    main.generation_status[cache_id] = {
+        "status": "generating",
+        "progress": 0,
+        "total": 1,
+    }
+
+    try:
+        response = client.get(f"/tts/stream/{cache_id}")
+        assert response.status_code == 200
+        assert response.content == b""
+    finally:
+        main.generation_status.pop(cache_id, None)
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
+
+def test_cleanup_old_audio_cache_removes_expired_files(monkeypatch, tmp_path):
+    cache_id = "c" * 32
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+
+    main.save_cache_meta(cache_id, {"status": "completed", "engine": "edge"})
+    audio_path = main.get_audio_path(cache_id)
+    srt_path = main.get_srt_path(cache_id)
+    with open(audio_path, "wb") as f:
+        f.write(b"audio")
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write("subtitle")
+
+    old_time = time.time() - (13 * 3600)
+    for path in (main.get_meta_path(cache_id), audio_path, srt_path):
+        os.utime(path, (old_time, old_time))
+
+    assert main.cleanup_old_audio_cache(retention_hours=12) == 3
+    assert not os.path.exists(audio_path)
+    assert not os.path.exists(srt_path)
+    assert not os.path.exists(main.get_meta_path(cache_id))
+
+
+def test_vieneu_start_enqueues_job_without_in_process_generation(monkeypatch):
+    """VieNeu jobs should be handed to the Redis worker, not FastAPI BackgroundTasks."""
+    enqueued = []
+
+    async def fake_enqueue(job):
+        enqueued.append(job)
+
+    monkeypatch.setattr(main, "enqueue_vieneu_tts_job", fake_enqueue)
+
+    response = client.post(
+        "/tts/start",
+        json={
+            "text": "Xin chào từ VieNeu",
+            "voice": "vieneu:default",
+            "engine": "vieneu",
+            "language": "vi",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    cache_id = data["cache_id"]
+
+    try:
+        assert data["status"] == "started"
+        assert len(enqueued) == 1
+        assert enqueued[0]["cache_id"] == cache_id
+        assert enqueued[0]["engine"] == "vieneu"
+        assert cache_id not in main.generation_status
+
+        meta = main.load_cache_meta(cache_id)
+        assert meta is not None
+        assert meta["status"] == "queued"
+        assert meta["engine"] == "vieneu"
+    finally:
+        main.generation_status.pop(cache_id, None)
+        main.cleanup_incomplete_cache(cache_id)
+
+
+def test_global_cache_clear_disabled_by_default():
+    response = client.delete("/tts/cache")
+    assert response.status_code == 404

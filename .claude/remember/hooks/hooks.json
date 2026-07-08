@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start-hook.sh\" 2>> \"${CLAUDE_PROJECT_DIR:-.}/.remember/logs/hook-errors.log\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-hook.sh\" 2>> \"${CLAUDE_PROJECT_DIR:-.}/.remember/logs/hook-errors.log\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -8,6 +8,7 @@ Provides audio post-processing functions for improving TTS output quality:
 - Lossless WAV export
 """
 
+import os
 import io
 import wave
 import logging
@@ -20,7 +21,7 @@ logger = logging.getLogger("story2audio")
 
 
 # Configuration constants
-VIENEU_SAMPLE_RATE = 24000  # VieNeu outputs 24kHz
+VIENEU_SAMPLE_RATE = int(os.getenv("VIENEU_SAMPLE_RATE", "48000"))  # VieNeu v3 Turbo outputs 48kHz
 VIENEU_CHANNELS = 1  # Mono
 VIENEU_SAMPLE_WIDTH = 2  # int16
 
@@ -103,7 +104,7 @@ def smart_normalize(
 def cosine_crossfade(
     segment1: np.ndarray,
     segment2: np.ndarray,
-    overlap_samples: int = 2400,  # 100ms at 24kHz
+    overlap_samples: int = int(VIENEU_SAMPLE_RATE * 0.1),  # 100ms
 ) -> np.ndarray:
     """
     Crossfade two audio segments using cosine curve for smooth transition.
@@ -111,7 +112,7 @@ def cosine_crossfade(
     Args:
         segment1: First audio segment (float32 numpy array)
         segment2: Second audio segment (float32 numpy array)
-        overlap_samples: Number of samples to overlap (default 100ms at 24kHz)
+        overlap_samples: Number of samples to overlap (default 100ms)
 
     Returns:
         Crossfaded audio segment
@@ -154,7 +155,7 @@ def apply_fade_effects(
 
     Args:
         audio_array: int16 numpy array of audio samples
-        sample_rate: Sample rate in Hz (default 24000 for VieNeu)
+        sample_rate: Sample rate in Hz
         fade_in_ms: Fade in duration in milliseconds
         fade_out_ms: Fade out duration in milliseconds
 
@@ -406,7 +407,7 @@ def process_vienneu_audio(
 
     # Add silence if requested
     if silence_ms > 0:
-        silence_samples = int(24000 * silence_ms / 1000)
+        silence_samples = int(VIENEU_SAMPLE_RATE * silence_ms / 1000)
         silence = np.zeros(silence_samples, dtype=np.int16)
         audio_int16 = np.concatenate([audio_int16, silence])
 

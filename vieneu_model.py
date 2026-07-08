@@ -36,8 +36,105 @@ _model_pool: List[Tuple["Vieneu", Lock]] = []  # (model, lock) tuples
 _pool_lock = Lock()
 _warmed_up = False
 
+# VieNeu defaults. v3 Turbo is the default SDK path; v2 modes remain available
+# for compatibility by setting VIENEU_MODE=v2_standard, v2_turbo, or v2_turbo_gpu.
+VIENEU_V3_TURBO_REPO = "pnnbao-ump/VieNeu-TTS-v3-Turbo"
+VIENEU_V2_REPO = "pnnbao-ump/VieNeu-TTS-v2"
+VIENEU_V2_GGUF = "VieNeu-TTS-v2-Q4-K-M.gguf"
+VIENEU_TURBO_REPO = "pnnbao-ump/VieNeu-TTS-v2-Turbo-GGUF"
+VIENEU_TURBO_GGUF = "vieneu-tts-v2-turbo.gguf"
+VIENEU_TURBO_GPU_REPO = "pnnbao-ump/VieNeu-TTS-v2-Turbo"
+VIENEU_CODEC_REPO = "pnnbao-ump/VieNeu-Codec"
+VIENEU_DECODER_FILENAME = "vieneu_decoder.onnx"
+VIENEU_ENCODER_FILENAME = "vieneu_encoder.onnx"
+DEFAULT_CODEC_REPO = "neuphonic/neucodec-onnx-decoder-int8"
+
 # Warmup configuration
-WARMUP_ITERATIONS = 5  # Number of inferences to stabilize model quality
+WARMUP_ITERATIONS = int(os.getenv("VIENEU_WARMUP_ITERATIONS", "5"))
+WARMUP_TEXT = os.getenv("VIENEU_WARMUP_TEXT", "Xin chào")
+
+
+def get_vieneu_config() -> Dict[str, object]:
+    """Return the active VieNeu SDK configuration.
+
+    Defaults use VieNeu-TTS v3 Turbo. The current SDK's v3 Turbo path is
+    selected with Vieneu() and auto-selects CPU ONNX or GPU PyTorch.
+    Set VIENEU_MODE=v2_standard, v2_turbo, or v2_turbo_gpu for legacy v2.
+    Set VIENEU_MODE=remote and VIENEU_REMOTE_API_BASE to use a remote v2 API.
+    """
+    mode = os.getenv("VIENEU_MODE", "v3_turbo").strip().lower() or "v3_turbo"
+    hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
+
+    if mode in {"v3", "v3_turbo", "turbo"}:
+        mode = "v3_turbo"
+        kwargs = {}
+    elif mode in {"remote", "api"}:
+        kwargs = {
+            "api_base": os.getenv("VIENEU_REMOTE_API_BASE", "http://localhost:23333/v1"),
+            "model_name": os.getenv("VIENEU_MODEL_REPO", VIENEU_V2_REPO),
+            "codec_repo": os.getenv("VIENEU_CODEC_REPO", "neuphonic/distill-neucodec"),
+            "codec_device": os.getenv("VIENEU_CODEC_DEVICE", "cpu"),
+        }
+    elif mode == "v2_turbo":
+        kwargs = {
+            "backbone_repo": os.getenv("VIENEU_MODEL_REPO", VIENEU_TURBO_REPO),
+            "backbone_filename": os.getenv("VIENEU_BACKBONE_FILENAME", VIENEU_TURBO_GGUF),
+            "decoder_repo": os.getenv("VIENEU_DECODER_REPO", VIENEU_CODEC_REPO),
+            "decoder_filename": os.getenv("VIENEU_DECODER_FILENAME", VIENEU_DECODER_FILENAME),
+            "encoder_repo": os.getenv("VIENEU_ENCODER_REPO", VIENEU_CODEC_REPO),
+            "encoder_filename": os.getenv("VIENEU_ENCODER_FILENAME", VIENEU_ENCODER_FILENAME),
+            "device": os.getenv("VIENEU_DEVICE", "cpu"),
+        }
+    elif mode == "v2_turbo_gpu":
+        kwargs = {
+            "backbone_repo": os.getenv("VIENEU_MODEL_REPO", VIENEU_TURBO_GPU_REPO),
+            "decoder_repo": os.getenv("VIENEU_DECODER_REPO", VIENEU_CODEC_REPO),
+            "decoder_filename": os.getenv("VIENEU_DECODER_FILENAME", VIENEU_DECODER_FILENAME),
+            "encoder_repo": os.getenv("VIENEU_ENCODER_REPO", VIENEU_CODEC_REPO),
+            "encoder_filename": os.getenv("VIENEU_ENCODER_FILENAME", VIENEU_ENCODER_FILENAME),
+            "device": os.getenv("VIENEU_DEVICE", "cuda"),
+            "backend": os.getenv("VIENEU_TURBO_BACKEND", "standard"),
+        }
+    elif mode in {"standard", "v2_standard"}:
+        mode = "v2_standard"
+        kwargs = {
+            "backbone_repo": os.getenv("VIENEU_MODEL_REPO", VIENEU_V2_REPO),
+            "backbone_device": os.getenv("VIENEU_BACKBONE_DEVICE", "cpu"),
+            "codec_repo": os.getenv("VIENEU_CODEC_REPO", DEFAULT_CODEC_REPO),
+            "codec_device": os.getenv("VIENEU_CODEC_DEVICE", "cpu"),
+            "gguf_filename": os.getenv("VIENEU_GGUF_FILENAME", VIENEU_V2_GGUF),
+        }
+    else:
+        raise ValueError(f"Unsupported VIENEU_MODE: {mode}")
+
+    if hf_token:
+        kwargs["hf_token"] = hf_token
+
+    return {"mode": mode, "kwargs": kwargs}
+
+
+def get_public_vieneu_config() -> Dict[str, object]:
+    """Return VieNeu config safe for logs and health responses."""
+    config = get_vieneu_config()
+    kwargs = dict(config["kwargs"])
+    if "hf_token" in kwargs:
+        kwargs["hf_token"] = "***"
+    return {"mode": config["mode"], "kwargs": kwargs}
+
+
+def create_vieneu_instance():
+    """Create a VieNeu SDK instance using the configured model."""
+    from vieneu import Vieneu
+
+    config = get_vieneu_config()
+    if config["mode"] == "v3_turbo":
+        return Vieneu(**config["kwargs"])
+    sdk_mode = {
+        "v2_standard": "standard",
+        "v2_turbo": "turbo",
+        "v2_turbo_gpu": "turbo_gpu",
+    }.get(config["mode"], config["mode"])
+    return Vieneu(mode=sdk_mode, **config["kwargs"])
 
 
 def get_pool_size() -> int:
@@ -51,15 +148,14 @@ def get_pool_size() -> int:
 
 def _create_model_pool(size: int) -> List[Tuple["Vieneu", Lock]]:
     """Create a pool of VieNeu model instances, each with its own lock."""
-    from vieneu import Vieneu
-
     pool = []
+    config = get_vieneu_config()
     for i in range(size):
-        model = Vieneu()
+        model = create_vieneu_instance()
         model_lock = Lock()  # Each model has its own lock
         pool.append((model, model_lock))
-        print(f"[STARTUP] VieNeu model instance {i + 1}/{size} created")
-        logger.info(f"VieNeu model instance {i + 1}/{size} created")
+        print(f"[STARTUP] VieNeu model instance {i + 1}/{size} created ({config['mode']})")
+        logger.info(f"VieNeu model instance {i + 1}/{size} created ({config['mode']})")
     return pool
 
 
@@ -82,7 +178,13 @@ def initialize_model_pool() -> None:
 
         try:
             pool_size = get_pool_size()
-            logger.info(f"Initializing VieNeu model pool with {pool_size} instances...")
+            config = get_public_vieneu_config()
+            logger.info(
+                "Initializing VieNeu model pool with %s instance(s): mode=%s, config=%s",
+                pool_size,
+                config["mode"],
+                config["kwargs"],
+            )
 
             # Create the pool with locks
             _model_pool = _create_model_pool(pool_size)
@@ -94,7 +196,7 @@ def initialize_model_pool() -> None:
                 try:
                     with lock:  # Acquire lock for warmup
                         for iteration in range(WARMUP_ITERATIONS):
-                            model.infer(f"warmup {iteration}")
+                            model.infer(f"{WARMUP_TEXT} {iteration}")
                     print(f"[STARTUP] Model {i + 1}/{pool_size} warmed up ({WARMUP_ITERATIONS} iterations)")
                     logger.info(f"Model {i + 1}/{pool_size} warmed up ({WARMUP_ITERATIONS} iterations)")
                 except Exception as e:
@@ -144,11 +246,10 @@ def get_vieneu_model():
 
     # Fallback: create a new instance if pool is not available
     logger.warning("Model pool not available, creating new instance")
-    from vieneu import Vieneu
-    model = Vieneu()
+    model = create_vieneu_instance()
     # Warm up with at least 1 inference to avoid cold start delay
     try:
-        model.infer("warmup")
+        model.infer(WARMUP_TEXT)
         logger.info("Fallback model warmed up successfully")
     except Exception as e:
         logger.warning(f"Fallback model warmup failed: {e}")
@@ -173,8 +274,7 @@ def get_vieneu_model_sync() -> "Vieneu":
         return model
 
     # Fallback
-    from vieneu import Vieneu
-    return Vieneu()
+    return create_vieneu_instance()
 
 
 def is_warmed_up() -> bool:
@@ -188,6 +288,8 @@ def get_pool_info() -> dict:
         "pool_size": len(_model_pool),
         "warmed_up": _warmed_up,
         "max_workers": get_pool_size(),
+        "model_version": get_public_vieneu_config()["mode"],
+        "config": get_public_vieneu_config(),
     }
 
 
@@ -209,13 +311,7 @@ def get_preset_voices_from_file() -> List[Tuple[str, str]]:
     """
     Load preset voices from local voices.json file.
 
-    Returns list of (description, voice_id) tuples for all 6 preset voices:
-    - Binh (nam miền Bắc) - default
-    - Tuyen (nam miền Bắc)
-    - Vinh (nam miền Nam)
-    - Doan (nữ miền Nam)
-    - Ly (nữ miền Bắc)
-    - Ngoc (nữ miền Bắc)
+    Returns list of (description, voice_id) tuples for local or package voices.
 
     Falls back to package's list_preset_voices() if local file not found.
     """
@@ -240,8 +336,7 @@ def get_preset_voices_from_file() -> List[Tuple[str, str]]:
 
     # Fallback to package's preset voices
     try:
-        from vieneu import Vieneu
-        tts = Vieneu()
+        tts = create_vieneu_instance()
         voices = tts.list_preset_voices()
         logger.info(f"Loaded {len(voices)} preset voices from package")
         return voices

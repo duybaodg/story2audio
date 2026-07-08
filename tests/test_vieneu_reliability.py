@@ -16,7 +16,7 @@ import sys
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from vieneu_model import get_pool_size, get_pool_info, initialize_model_pool
+from vieneu_model import get_pool_size, get_pool_info, get_vieneu_config, initialize_model_pool
 
 
 class TestVieneuModelPool:
@@ -34,6 +34,79 @@ class TestVieneuModelPool:
         assert "max_workers" in info
         # max_workers reflects the configured pool size (1 for sequential)
         assert info["max_workers"] == 1
+
+    def test_default_config_uses_v3_turbo(self, monkeypatch):
+        """Test that the default VieNeu config uses v3 Turbo."""
+        for key in [
+            "VIENEU_MODE",
+            "VIENEU_MODEL_REPO",
+            "VIENEU_BACKBONE_DEVICE",
+            "VIENEU_CODEC_REPO",
+            "VIENEU_CODEC_DEVICE",
+            "VIENEU_GGUF_FILENAME",
+            "HF_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+        ]:
+            monkeypatch.delenv(key, raising=False)
+
+        config = get_vieneu_config()
+
+        assert config["mode"] == "v3_turbo"
+        assert config["kwargs"] == {}
+
+    def test_v2_turbo_config_uses_turbo_cpu_args(self, monkeypatch):
+        """Test that legacy v2 Turbo mode remains available explicitly."""
+        monkeypatch.setenv("VIENEU_MODE", "v2_turbo")
+        for key in [
+            "VIENEU_MODEL_REPO",
+            "VIENEU_BACKBONE_FILENAME",
+            "VIENEU_DEVICE",
+            "VIENEU_DECODER_REPO",
+            "VIENEU_ENCODER_REPO",
+        ]:
+            monkeypatch.delenv(key, raising=False)
+
+        config = get_vieneu_config()
+
+        assert config["mode"] == "v2_turbo"
+        assert config["kwargs"]["backbone_repo"] == "pnnbao-ump/VieNeu-TTS-v2-Turbo-GGUF"
+        assert config["kwargs"]["backbone_filename"] == "vieneu-tts-v2-turbo.gguf"
+        assert config["kwargs"]["decoder_repo"] == "pnnbao-ump/VieNeu-Codec"
+        assert config["kwargs"]["encoder_repo"] == "pnnbao-ump/VieNeu-Codec"
+        assert config["kwargs"]["device"] == "cpu"
+        assert "backbone_device" not in config["kwargs"]
+        assert "codec_repo" not in config["kwargs"]
+        assert "gguf_filename" not in config["kwargs"]
+
+    def test_v2_standard_config_uses_standard_args(self, monkeypatch):
+        """Test that legacy v2 Standard mode remains available explicitly."""
+        monkeypatch.setenv("VIENEU_MODE", "v2_standard")
+        monkeypatch.delenv("VIENEU_MODEL_REPO", raising=False)
+
+        config = get_vieneu_config()
+
+        assert config["mode"] == "v2_standard"
+        assert config["kwargs"]["backbone_repo"] == "pnnbao-ump/VieNeu-TTS-v2"
+        assert config["kwargs"]["backbone_device"] == "cpu"
+        assert config["kwargs"]["gguf_filename"] == "VieNeu-TTS-v2-Q4-K-M.gguf"
+
+    def test_turbo_gpu_config_uses_turbo_gpu_args(self, monkeypatch):
+        """Test that GPU Turbo mode passes the constructor arguments VieNeu expects."""
+        monkeypatch.setenv("VIENEU_MODE", "v2_turbo_gpu")
+        monkeypatch.setenv("VIENEU_DEVICE", "cuda")
+        monkeypatch.setenv("VIENEU_TURBO_BACKEND", "lmdeploy")
+        monkeypatch.delenv("VIENEU_MODEL_REPO", raising=False)
+
+        config = get_vieneu_config()
+
+        assert config["mode"] == "v2_turbo_gpu"
+        assert config["kwargs"]["backbone_repo"] == "pnnbao-ump/VieNeu-TTS-v2-Turbo"
+        assert config["kwargs"]["decoder_repo"] == "pnnbao-ump/VieNeu-Codec"
+        assert config["kwargs"]["encoder_repo"] == "pnnbao-ump/VieNeu-Codec"
+        assert config["kwargs"]["device"] == "cuda"
+        assert config["kwargs"]["backend"] == "lmdeploy"
+        assert "backbone_device" not in config["kwargs"]
+        assert "codec_repo" not in config["kwargs"]
 
 
 class TestVieneuSequentialProcessing:
@@ -114,3 +187,12 @@ class TestVieneuIntegration:
 
         assert get_engine_from_voice("vieneu:default") == "vieneu"
         assert get_engine_from_voice("vieneu:some_preset") == "vieneu"
+
+    def test_vieneu_voice_validation_rejects_stale_preset(self):
+        """Test that removed VieNeu presets fail before worker execution."""
+        from fastapi import HTTPException
+        from main import validate_voice
+
+        assert validate_voice("vi", "vieneu:Trúc Ly", "vieneu") == "vieneu:Trúc Ly"
+        with pytest.raises(HTTPException):
+            validate_voice("vi", "vieneu:Đức Trí", "vieneu")

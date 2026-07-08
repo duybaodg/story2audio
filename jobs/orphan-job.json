@@ -1,0 +1,1 @@
+{"job_id": "orphan-job", "document_id": "doc-1", "status": "failed", "progress": 0.5, "message": "Extraction interrupted", "created_at": "2026-07-08 08:45:20.825009+00:00", "started_at": "2026-07-08 08:45:20.825010+00:00", "completed_at": "2026-07-08 08:45:20.825344+00:00", "error": "Server crashed during extraction", "result": null}
