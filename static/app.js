@@ -1684,6 +1684,8 @@
         const engineSel = document.getElementById('engine');
         const voiceGroup = document.getElementById('voiceGroup');
         const engineIndicator = document.getElementById('engineIndicator');
+        const modelGroup = document.getElementById('modelGroup');
+        const modelSel = document.getElementById('model');
         const speedSelect = document.getElementById('speedSelect');
         const convertBtn = document.getElementById('convertBtn');
 
@@ -1778,6 +1780,7 @@
             if (audioQualityGroup) {
                 audioQualityGroup.style.display = selectedEngine === 'vieneu' ? '' : 'none';
             }
+            modelGroup.style.display = selectedEngine === 'vieneu' ? '' : 'none';
         }
 
         function updateEngineIndicator(engine) {
@@ -1793,10 +1796,24 @@
             statusLabel.textContent = text;
         }
 
-        function updateProgress(current, total) {
+        function formatDuration(seconds) {
+            if (!Number.isFinite(Number(seconds))) return '';
+            const value = Math.max(0, Math.ceil(Number(seconds)));
+            if (value < 60) return `${value} giây`;
+            const minutes = Math.floor(value / 60);
+            const remainder = value % 60;
+            if (minutes < 60) return `${minutes} phút${remainder ? ` ${remainder} giây` : ''}`;
+            const hours = Math.floor(minutes / 60);
+            return `${hours} giờ ${minutes % 60} phút`;
+        }
+
+        function updateProgress(current, total, remainingSeconds = null) {
             const pct = total > 0 ? (current / total) * 100 : 0;
             progFill.style.width = pct + '%';
-            progText.textContent = `${current || 0} / ${total || 0} đoạn`;
+            const estimate = remainingSeconds > 0
+                ? ` · còn khoảng ${formatDuration(remainingSeconds)}`
+                : '';
+            progText.textContent = `${current || 0} / ${total || 0} đoạn${estimate}`;
         }
 
         function setBadge(type) {
@@ -2148,7 +2165,7 @@
                     const data = await res.json();
                     lastStatus = data;
 
-                    updateProgress(data.progress || 0, data.total || 0);
+                    updateProgress(data.progress || 0, data.total || 0, data.remaining_seconds);
                     renderFileSize();
 
                     if (data.status === 'queued') {
@@ -2251,6 +2268,7 @@
             // Add audio quality for VieNeu engine
             if (engine === 'vieneu') {
                 body.audio_quality = document.getElementById('audioQuality').value;
+                body.model = modelSel.value;
             }
 
             let data;
@@ -2274,6 +2292,7 @@
             currentCacheId = data.cache_id;
             subtitleSupported = !!data.subtitle_supported;
             playerWrap.style.display = 'block';
+            updateProgress(0, data.estimated_chunks || 0, data.estimated_seconds);
 
             if (engine === 'edge') {
                 startSubtitleEventStream(currentCacheId);
@@ -2412,7 +2431,7 @@
         // ---------------------------------------------------------------------------
         // Session Management
         // ---------------------------------------------------------------------------
-        const SESSION_STORAGE_KEY = 'story2audio_session';
+        const SESSION_STORAGE_KEY = 'ebook2audio_session';
 
         function clearSession() {
             localStorage.removeItem(SESSION_STORAGE_KEY);

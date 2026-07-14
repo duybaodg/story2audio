@@ -408,6 +408,57 @@ wheels = [
 ]
 
 [[package]]
+name = "ebook2audio"
+version = "4.0.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "ebooklib" },
+    { name = "edge-tts" },
+    { name = "fastapi" },
+    { name = "gtts" },
+    { name = "pdf2image" },
+    { name = "pdfplumber" },
+    { name = "pillow" },
+    { name = "pydub" },
+    { name = "pypdf2" },
+    { name = "pytesseract" },
+    { name = "python-dotenv" },
+    { name = "python-magic" },
+    { name = "python-multipart" },
+    { name = "redis" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "vieneu" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ebooklib", specifier = ">=0.18" },
+    { name = "edge-tts", specifier = ">=7.2.8" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "gtts", specifier = ">=2.5.4" },
+    { name = "pdf2image", specifier = ">=1.16.0" },
+    { name = "pdfplumber", specifier = ">=0.11.0" },
+    { name = "pillow", specifier = ">=9.0.0" },
+    { name = "pydub", specifier = ">=0.25.1" },
+    { name = "pypdf2", specifier = ">=3.0.1" },
+    { name = "pytesseract", specifier = ">=0.3.10" },
+    { name = "python-dotenv", specifier = ">=1.1.0" },
+    { name = "python-magic", specifier = ">=0.4.27" },
+    { name = "python-multipart", specifier = ">=0.0.26" },
+    { name = "redis", specifier = ">=5.0.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
+    { name = "vieneu", specifier = ">=3.0.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
+
+[[package]]
 name = "ebooklib"
 version = "0.20"
 source = { registry = "https://pypi.org/simple" }
@@ -1750,57 +1801,6 @@ wheels = [
 ]
 
 [[package]]
-name = "story2audio"
-version = "4.0.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "ebooklib" },
-    { name = "edge-tts" },
-    { name = "fastapi" },
-    { name = "gtts" },
-    { name = "pdf2image" },
-    { name = "pdfplumber" },
-    { name = "pillow" },
-    { name = "pydub" },
-    { name = "pypdf2" },
-    { name = "pytesseract" },
-    { name = "python-dotenv" },
-    { name = "python-magic" },
-    { name = "python-multipart" },
-    { name = "redis" },
-    { name = "uvicorn", extra = ["standard"] },
-    { name = "vieneu" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ebooklib", specifier = ">=0.18" },
-    { name = "edge-tts", specifier = ">=7.2.8" },
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "gtts", specifier = ">=2.5.4" },
-    { name = "pdf2image", specifier = ">=1.16.0" },
-    { name = "pdfplumber", specifier = ">=0.11.0" },
-    { name = "pillow", specifier = ">=9.0.0" },
-    { name = "pydub", specifier = ">=0.25.1" },
-    { name = "pypdf2", specifier = ">=3.0.1" },
-    { name = "pytesseract", specifier = ">=0.3.10" },
-    { name = "python-dotenv", specifier = ">=1.1.0" },
-    { name = "python-magic", specifier = ">=0.4.27" },
-    { name = "python-multipart", specifier = ">=0.0.26" },
-    { name = "redis", specifier = ">=5.0.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
-    { name = "vieneu", specifier = ">=3.0.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.3" }]
-
-[[package]]
 name = "tabulate"
 version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1963,7 +1963,7 @@ wheels = [
 
 [[package]]
 name = "vieneu"
-version = "3.0.12"
+version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gradio" },
@@ -1977,9 +1977,9 @@ dependencies = [
     { name = "soxr" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f8/37/6bc29c414e8491b1ee95ade4a458976ab5c6dfcaad9359372872e3d648c8/vieneu-3.0.12.tar.gz", hash = "sha256:46c4257abb1cec4c4ee899e9ab001c64fb8ac64dce098bf2cd4b8eca074a2c8f", size = 1136862, upload-time = "2026-07-05T10:49:21.381Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/cb/077c3e664a984874c544f0f1b6030642d38dbc5eeadc49249d5a5fa74bd4/vieneu-3.2.0.tar.gz", hash = "sha256:fa3c4a16554f7b62964c04ff8edd3e9ab56f098b8cf6b741b2dba2b644befbf6", size = 1151220, upload-time = "2026-07-11T12:10:31.886Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0a/72/7fcbd9ae2f7cf6774d6c5a185a5698fbadc484b0a795f91e3aa1b5ab971c/vieneu-3.0.12-py3-none-any.whl", hash = "sha256:e7b240c7af4f1ad03e586619c518e3da1c7c821cc650265f327ea22cb99b5b8b", size = 1141687, upload-time = "2026-07-05T10:49:19.865Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/77/18b6bd679a655b4ebf9ff525f908bb39efb52548864ef7997c9e0270ee14/vieneu-3.2.0-py3-none-any.whl", hash = "sha256:e0e31fa5eb0abd241de90aa1897b6080eca837f82d86a174c2806338c47bbbce", size = 1155048, upload-time = "2026-07-11T12:10:30.278Z" },
 ]
 
 [[package]]

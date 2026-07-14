@@ -1,6 +1,6 @@
 # Document Upload Feature Design Specification
 
-**Project:** Story2Audio v3.0.0+
+**Project:** Ebook2Audio v3.0.0+
 **Feature:** PDF/EPUB Upload with Text Extraction and OCR Support
 **Date:** 2025-01-14
 **Status:** Design Approved
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-Add PDF and EPUB file upload capabilities to Story2Audio, enabling users to convert ebooks and documents into audio content. The feature supports large files (200+ pages), intelligent text extraction with structure detection, OCR fallback for scanned documents, and user-controlled chapter selection before audio conversion.
+Add PDF and EPUB file upload capabilities to Ebook2Audio, enabling users to convert ebooks and documents into audio content. The feature supports large files (200+ pages), intelligent text extraction with structure detection, OCR fallback for scanned documents, and user-controlled chapter selection before audio conversion.
 
 **Key Capabilities:**
 - Upload PDF/EPUB files up to 50MB with chunked upload (5MB chunks)
@@ -58,7 +58,7 @@ The feature integrates into the existing FastAPI application as a parallel modul
 ### Component Structure
 
 ```
-story2audio/
+ebook2audio/
 ├── main.py                    # Existing TTS API (unchanged)
 ├── document_api.py            # New: Document upload/management API
 ├── file_processor.py          # New: File storage & session management
@@ -246,7 +246,7 @@ class UploadSession:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Story2Audio - Document Upload                              │
+│  Ebook2Audio - Document Upload                              │
 ├──────────────────────┬──────────────────────────────────────┤
 │   Chapter Tree       │   Chapter Preview                    │
 │   (Left Panel)       │   (Right Panel)                      │

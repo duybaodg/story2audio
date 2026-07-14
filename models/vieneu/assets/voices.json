@@ -59,6 +59,26 @@
       "description": "Thục Đoan (nữ, mượt mà)",
       "gender": "female",
       "style": "Smooth"
+    },
+    "Minh Triết": {
+      "description": "Minh Triết (nam, miền Nam, tin tức)",
+      "gender": "male",
+      "style": "News"
+    },
+    "Thùy Dung": {
+      "description": "Thùy Dung (nữ, miền Nam, tin tức)",
+      "gender": "female",
+      "style": "News"
+    },
+    "Quang Sơn": {
+      "description": "Quang Sơn (nam, miền Trung, tự nhiên)",
+      "gender": "male",
+      "style": "Natural"
+    },
+    "Ngọc Trân": {
+      "description": "Ngọc Trân (nữ, miền Trung, tự nhiên)",
+      "gender": "female",
+      "style": "Natural"
     }
   }
 }

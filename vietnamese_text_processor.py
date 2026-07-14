@@ -12,7 +12,7 @@ import re
 import logging
 from typing import List, Tuple, Optional
 
-logger = logging.getLogger("story2audio")
+logger = logging.getLogger("ebook2audio")
 
 
 # Vietnamese-specific sentence patterns

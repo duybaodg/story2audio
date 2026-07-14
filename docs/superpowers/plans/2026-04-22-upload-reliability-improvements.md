@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add rate limiting, resumable uploads, parallel job processing, and OCR retry functionality to the story2audio application.
+**Goal:** Add rate limiting, resumable uploads, parallel job processing, and OCR retry functionality to the ebook2audio application.
 
 **Architecture:** Three independent feature groups: (1) Redis-based rate limiting + session persistence for resumable uploads, (2) Dynamic worker pool + parallel chapter extraction, (3) Async locks for race condition safety + manual OCR retry endpoint.
 
@@ -428,11 +428,11 @@ git commit -m "feat: add rate limit middleware to upload endpoints"
 services:
   redis:
     image: redis:alpine
-    container_name: story2audio_redis
+    container_name: ebook2audio_redis
     restart: unless-stopped
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     volumes:
-      - story2audio_redis:/data
+      - ebook2audio_redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -449,7 +449,7 @@ services:
       REDIS_URL: "redis://redis:6379"
 
 volumes:
-  story2audio_redis:
+  ebook2audio_redis:
   # ... existing volumes ...
 ```
 

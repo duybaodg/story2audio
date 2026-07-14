@@ -1,6 +1,6 @@
 # Versioning and Azure Deployment Guide
 
-This document describes how to version Story2Audio releases and what to consider before deploying the FastAPI, Redis, and VieNeu worker architecture to Azure.
+This document describes how to version Ebook2Audio releases and what to consider before deploying the FastAPI, Redis, and VieNeu worker architecture to Azure.
 
 For an executable step-by-step runbook, see [`azure-deploy-plan.md`](azure-deploy-plan.md).
 
@@ -25,8 +25,8 @@ git push origin v4.0.0
 ```
 
 ```bash
-docker build -t story2audio:v4.0.0 .
-docker tag story2audio:v4.0.0 story2audio:latest
+docker build -t ebook2audio:v4.0.0 .
+docker tag ebook2audio:v4.0.0 ebook2audio:latest
 ```
 
 Use semantic versioning:
@@ -51,11 +51,11 @@ Recommended first production shape:
 
 ```text
 Azure Container Registry
-  -> story2audio:v4.0.0
+  -> ebook2audio:v4.0.0
 
 Azure Container Apps
-  -> story2audio-app
-  -> story2audio-vieneu-worker
+  -> ebook2audio-app
+  -> ebook2audio-vieneu-worker
 
 Azure Managed Redis or Azure Cache for Redis
   -> upload rate limiting
@@ -86,7 +86,7 @@ Reference:
 
 ## Service Responsibilities
 
-### `story2audio-app`
+### `ebook2audio-app`
 
 Runs FastAPI, static UI, document upload APIs, status APIs, and cached audio downloads.
 
@@ -101,7 +101,7 @@ MAX_WORKERS=1
 
 The web app should not load the VieNeu model. That keeps the public API responsive and reduces memory pressure.
 
-### `story2audio-vieneu-worker`
+### `ebook2audio-vieneu-worker`
 
 Runs `python tts_worker.py`, warms the VieNeu model, pulls jobs from Redis, writes audio and metadata to shared storage, and processes one VieNeu job at a time.
 
@@ -174,8 +174,8 @@ Minimum practical Azure sizing:
 
 | Component | CPU | Memory | Notes |
 | --- | ---: | ---: | --- |
-| `story2audio-app` | 1 vCPU | 2 GiB | HTTP API, UI, status, cached downloads |
-| `story2audio-vieneu-worker` | 2-4 vCPU | 6-8 GiB | CPU VieNeu, one job at a time |
+| `ebook2audio-app` | 1 vCPU | 2 GiB | HTTP API, UI, status, cached downloads |
+| `ebook2audio-vieneu-worker` | 2-4 vCPU | 6-8 GiB | CPU VieNeu, one job at a time |
 | Redis | Small managed tier | Provider managed | Queue and rate limits |
 | Azure Files | 50 GiB+ | N/A | Audio, docs, jobs, model cache |
 
@@ -259,12 +259,12 @@ git tag v4.0.0
 git push origin v4.0.0
 
 # 4. Build and push image to Azure Container Registry
-docker build -t <acr-name>.azurecr.io/story2audio:v4.0.0 .
-docker push <acr-name>.azurecr.io/story2audio:v4.0.0
+docker build -t <acr-name>.azurecr.io/ebook2audio:v4.0.0 .
+docker push <acr-name>.azurecr.io/ebook2audio:v4.0.0
 
 # 5. Deploy or update Container Apps
-# - story2audio-app uses uvicorn command from Dockerfile
-# - story2audio-vieneu-worker uses: python tts_worker.py
+# - ebook2audio-app uses uvicorn command from Dockerfile
+# - ebook2audio-vieneu-worker uses: python tts_worker.py
 ```
 
 ## Runtime Checks

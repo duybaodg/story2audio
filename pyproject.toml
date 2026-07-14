@@ -1,5 +1,5 @@
 [project]
-name = "story2audio"
+name = "ebook2audio"
 version = "4.0.0"
 description = "Ứng dụng FastAPI chuyển văn bản thành audio MP3 với streaming, cache và phụ đề trực tiếp (Live Subtitles)"
 readme = "README.md"

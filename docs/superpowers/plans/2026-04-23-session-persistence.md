@@ -213,7 +213,7 @@ After the `let subtitleCursor = 0;` line (~line 1078), add:
 // ---------------------------------------------------------------------------
 // Session Persistence
 // ---------------------------------------------------------------------------
-const SESSION_STORAGE_KEY = 'story2audio_session';
+const SESSION_STORAGE_KEY = 'ebook2audio_session';
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 ```
 

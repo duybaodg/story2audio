@@ -1,4 +1,4 @@
-# Story2Audio - Project Context
+# Ebook2Audio - Project Context
 
 Vietnamese text-to-speech application with live streaming, document upload, and multi-engine TTS support.
 
@@ -65,7 +65,7 @@ PROXY=http://...                      # Optional proxy
 
 - Async/await for I/O operations
 - Type hints with `from typing import ...`
-- Logging via `logging.getLogger("story2audio")`
+- Logging via `logging.getLogger("ebook2audio")`
 - Context managers for resource management
 
 ## Gotchas

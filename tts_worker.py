@@ -1,7 +1,9 @@
 import logging
 import os
 import signal
+import threading
 import time
+from pathlib import Path
 
 from tts_queue import (
     TTSQueueError,
@@ -12,15 +14,29 @@ from tts_queue import (
     is_vieneu_cancelled_sync,
     recover_processing_jobs,
     reserve_job,
+    TTS_WORKER_HEARTBEAT_KEY,
+    TTS_WORKER_HEARTBEAT_TTL_SECONDS,
 )
 
-logger = logging.getLogger("story2audio.worker")
+logger = logging.getLogger("ebook2audio.worker")
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
 _shutdown = False
+_READY_FILE = Path("/tmp/vieneu-worker-ready")
+
+
+def _heartbeat_loop() -> None:
+    client = get_sync_client()
+    try:
+        while not _shutdown:
+            client.setex(TTS_WORKER_HEARTBEAT_KEY, TTS_WORKER_HEARTBEAT_TTL_SECONDS, "1")
+            time.sleep(max(1, TTS_WORKER_HEARTBEAT_TTL_SECONDS // 3))
+    finally:
+        client.delete(TTS_WORKER_HEARTBEAT_KEY)
+        client.close()
 
 
 def _handle_shutdown(signum, frame):
@@ -63,12 +79,14 @@ def _process_job(raw_job: str, client) -> None:
         language=job.get("language", "vi"),
         chunks=job.get("chunks"),
         audio_quality=job.get("audio_quality", "standard"),
+        model=job.get("model"),
     )
     clear_vieneu_cancel_sync(cache_id, client)
     logger.info("Finished VieNeu job %s", cache_id)
 
 
 def main_loop() -> int:
+    _READY_FILE.unlink(missing_ok=True)
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
 
@@ -84,6 +102,9 @@ def main_loop() -> int:
         logger.info("Recovered %d in-flight VieNeu job(s)", recovered)
 
     logger.info("VieNeu worker ready")
+    _READY_FILE.touch()
+    heartbeat = threading.Thread(target=_heartbeat_loop, daemon=True)
+    heartbeat.start()
     try:
         while not _shutdown:
             try:
@@ -116,6 +137,7 @@ def main_loop() -> int:
                 logger.exception("Worker loop error: %s", exc)
                 time.sleep(2)
     finally:
+        _READY_FILE.unlink(missing_ok=True)
         client.close()
 
     return 0

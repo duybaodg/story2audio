@@ -23,8 +23,8 @@ RUN pip install --no-cache-dir --upgrade pip uv
 COPY pyproject.toml README.md ./
 COPY uv.lock ./
 
-# Đồng bộ dependency (không yêu cầu frozen để tránh fail khi lock chưa đồng bộ 100%)
-RUN uv sync --no-dev
+# Install exactly the dependency versions verified by CI.
+RUN uv sync --locked --no-dev
 
 # Copy source code
 COPY . .

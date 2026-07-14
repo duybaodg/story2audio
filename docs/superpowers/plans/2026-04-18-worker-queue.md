@@ -13,7 +13,7 @@
 ## File Structure
 
 ```
-story2audio/
+ebook2audio/
 ├── job_queue.py              # NEW - Job management & worker pool
 ├── document_api.py           # MODIFY - Add job endpoints
 ├── text_extractor.py         # MODIFY - Add blocking extraction functions

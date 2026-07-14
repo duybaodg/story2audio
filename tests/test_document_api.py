@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -177,6 +178,7 @@ def test_vieneu_start_enqueues_job_without_in_process_generation(monkeypatch):
             "voice": "vieneu:default",
             "engine": "vieneu",
             "language": "vi",
+            "model": "v3_turbo_int8",
         },
     )
 
@@ -189,17 +191,148 @@ def test_vieneu_start_enqueues_job_without_in_process_generation(monkeypatch):
         assert len(enqueued) == 1
         assert enqueued[0]["cache_id"] == cache_id
         assert enqueued[0]["engine"] == "vieneu"
+        assert enqueued[0]["model"] == "v3_turbo_int8"
+        assert data["estimated_seconds"] > 0
         assert cache_id not in main.generation_status
 
         meta = main.load_cache_meta(cache_id)
         assert meta is not None
         assert meta["status"] == "queued"
         assert meta["engine"] == "vieneu"
+        assert meta["model"] == "v3_turbo_int8"
+        assert meta["estimated_seconds"] == data["estimated_seconds"]
     finally:
         main.generation_status.pop(cache_id, None)
         main.cleanup_incomplete_cache(cache_id)
 
 
+def test_tts_rejects_unknown_vieneu_model():
+    response = client.post(
+        "/tts/start",
+        json={
+            "text": "Xin chào",
+            "voice": "vieneu:default",
+            "engine": "vieneu",
+            "language": "vi",
+            "model": "unknown",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_ui_offers_both_vieneu_models_and_all_voices():
+    html = client.get("/").text
+    assert 'value="v3_turbo"' in html
+    assert 'value="v3_turbo_int8"' in html
+
+    from vieneu_model import get_preset_voices_from_file
+
+    expected = {f"vieneu:{name}" for _description, name in get_preset_voices_from_file()}
+    actual = {
+        voice["value"]
+        for voice in client.get("/tts/voices").json()["voices"]["vi"]
+        if voice["engine"] == "vieneu"
+    }
+    assert expected <= actual
+
+
+def test_conversion_estimate_refines_with_progress(monkeypatch):
+    assert main.estimate_conversion_seconds("x" * 100, "vieneu", "v3_turbo_int8") \
+        < main.estimate_conversion_seconds("x" * 100, "vieneu", "v3_turbo")
+
+    monkeypatch.setattr(main.time, "time", lambda: 130.0)
+    status = main.add_remaining_time({
+        "status": "generating",
+        "estimated_seconds": 100,
+        "started_at": 100.0,
+        "progress": 2,
+        "total": 4,
+    })
+    assert status["remaining_seconds"] == 30
+
+
 def test_global_cache_clear_disabled_by_default():
     response = client.delete("/tts/cache")
     assert response.status_code == 404
+
+
+def test_document_routes_are_isolated_by_browser_session(tmp_path):
+    from file_processor import active_documents, document_queue
+    from models import Document, FileType
+
+    owner = TestClient(app)
+    stranger = TestClient(app)
+    owner.get("/document/health")
+    stranger.get("/document/health")
+    owner_session = owner.cookies.get("story2audio_session")
+    document = Document(
+        document_id="private-doc",
+        filename="private.pdf",
+        file_type=FileType.PDF,
+        file_size=1,
+        file_path=str(tmp_path / "private.pdf"),
+        owner_session=owner_session,
+    )
+    active_documents[document.document_id] = document
+    document_queue.append(document.document_id)
+
+    try:
+        assert owner.get("/document/queue").json()["queue"][0]["document_id"] == "private-doc"
+        assert stranger.get("/document/queue").json()["queue"] == []
+        assert stranger.get("/document/private-doc").status_code == 404
+        assert stranger.delete("/document/private-doc").status_code == 404
+        assert owner.get("/document/private-doc").status_code == 200
+    finally:
+        active_documents.pop(document.document_id, None)
+        if document.document_id in document_queue:
+            document_queue.remove(document.document_id)
+
+
+def test_tts_rejects_oversized_text(monkeypatch):
+    monkeypatch.setattr(main, "TTS_MAX_TEXT_LENGTH", 5)
+    response = client.post(
+        "/tts/start",
+        json={"text": "123456", "voice": "vi-VN-HoaiMyNeural", "engine": "edge"},
+    )
+    assert response.status_code == 413
+
+
+def test_tts_rate_limit_blocks_request():
+    class DenyLimiter:
+        async def check_tts_limits(self, ip):
+            return False, "limit reached"
+
+    app.state.rate_limiter = DenyLimiter()
+    try:
+        response = client.post(
+            "/tts/start",
+            json={"text": "hello", "voice": "vi-VN-HoaiMyNeural", "engine": "edge"},
+        )
+        assert response.status_code == 429
+    finally:
+        del app.state.rate_limiter
+
+
+def test_forwarded_ip_is_only_used_for_trusted_proxy(monkeypatch):
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [(b"x-forwarded-for", b"203.0.113.10")],
+        "client": ("127.0.0.1", 1234),
+    })
+    monkeypatch.setattr(main, "TRUST_PROXY_HEADERS", False)
+    assert main.get_client_ip(request) == "127.0.0.1"
+    monkeypatch.setattr(main, "TRUST_PROXY_HEADERS", True)
+    assert main.get_client_ip(request) == "203.0.113.10"
+
+
+def test_health_fails_when_redis_is_unavailable(monkeypatch):
+    async def unavailable():
+        return False
+
+    monkeypatch.setattr(main, "redis_is_ready", unavailable)
+    monkeypatch.setattr(main, "vieneu_worker_is_ready", unavailable)
+    assert client.get("/health").status_code == 503
+    assert client.get("/tts/health").status_code == 503

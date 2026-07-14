@@ -1,5 +1,5 @@
 # document_api.py
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -37,6 +37,34 @@ _CHUNK_READ_SIZE = 1024 * 1024
 _MAX_CONCURRENT_CHUNKS_PER_UPLOAD = 5
 _chunk_lock = asyncio.Lock()
 _active_chunk_counts: dict[str, int] = {}
+
+
+def _session_id(request: Request) -> str:
+    session_id = getattr(request.state, "session_id", None) or request.cookies.get("story2audio_session")
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Browser session required")
+    return session_id
+
+
+def _owned_upload(request: Request, upload_id: str):
+    session = active_sessions.get(upload_id)
+    if not session or session.owner_session != _session_id(request):
+        raise HTTPException(status_code=404, detail="Upload session not found")
+    return session
+
+
+async def _owned_document(request: Request, document_id: str):
+    document = await get_document(document_id, _session_id(request))
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return document
+
+
+async def _owned_job(request: Request, job_id: str):
+    job = get_job_status(job_id)
+    if not job or not await get_document(job.document_id, _session_id(request)):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 async def _read_upload_chunk(chunk: UploadFile, expected_size: int) -> bytes:
@@ -85,6 +113,7 @@ async def health_check():
 
 @router.post("/upload/initiate")
 async def upload_initiate(
+    request: Request,
     filename: str = Form(...),
     file_size: int = Form(...),
     checksum: str = Form(...)
@@ -95,7 +124,7 @@ async def upload_initiate(
     Returns upload_id and chunk size for subsequent chunk uploads.
     """
     try:
-        session = await initiate_upload(filename, file_size, checksum)
+        session = await initiate_upload(filename, file_size, checksum, _session_id(request))
         return {
             "upload_id": session.upload_id,
             "chunk_size": session.chunk_size,
@@ -110,6 +139,7 @@ async def upload_initiate(
 
 @router.post("/upload/chunk")
 async def upload_chunk(
+    request: Request,
     upload_id: str = Form(...),
     chunk_number: int = Form(...),
     chunk: UploadFile = File(...)
@@ -121,6 +151,7 @@ async def upload_chunk(
     """
     await _reserve_chunk_slot(upload_id)
     try:
+        _owned_upload(request, upload_id)
         expected_size = get_expected_chunk_size(upload_id, chunk_number)
         chunk_data = await _read_upload_chunk(chunk, expected_size)
         success = await receive_chunk(upload_id, chunk_number, chunk_data)
@@ -152,7 +183,7 @@ async def upload_chunk(
         await _release_chunk_slot(upload_id)
 
 @router.post("/upload/complete")
-async def upload_complete(upload_id: str = Form(...)):
+async def upload_complete(request: Request, upload_id: str = Form(...)):
     """
     Complete the upload process.
 
@@ -160,6 +191,7 @@ async def upload_complete(upload_id: str = Form(...)):
     Triggers text extraction in background.
     """
     try:
+        _owned_upload(request, upload_id)
         document = await complete_upload(upload_id)
 
         # Trigger background extraction
@@ -182,20 +214,18 @@ async def upload_complete(upload_id: str = Form(...)):
         raise HTTPException(status_code=500, detail="Upload completion failed")
 
 @router.get("/queue")
-async def get_document_queue():
+async def get_document_queue(request: Request):
     """
     Get all documents in the upload queue.
     """
-    return {"queue": await get_queue()}
+    return {"queue": await get_queue(_session_id(request))}
 
 @router.get("/{document_id}")
-async def get_document_info(document_id: str):
+async def get_document_info(request: Request, document_id: str):
     """
     Get document information and status.
     """
-    document = await get_document(document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
+    document = await _owned_document(request, document_id)
 
     return {
         "document_id": document.document_id,
@@ -212,15 +242,13 @@ async def get_document_info(document_id: str):
     }
 
 @router.get("/{document_id}/extract/stream")
-async def stream_extraction(document_id: str):
+async def stream_extraction(request: Request, document_id: str):
     """
     Stream chapter extraction progress via Server-Sent Events.
 
     Yields Chapter objects as they are extracted.
     """
-    document = await get_document(document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
+    document = await _owned_document(request, document_id)
 
     if document.status == DocumentStatus.EXTRACTING:
         # Extraction already in progress
@@ -330,13 +358,11 @@ async def stream_extraction(document_id: str):
     )
 
 @router.get("/{document_id}/structure")
-async def get_document_structure(document_id: str):
+async def get_document_structure(request: Request, document_id: str):
     """
     Get document chapter structure (non-streaming).
     """
-    document = await get_document(document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
+    document = await _owned_document(request, document_id)
 
     # Get chapters from document metadata
     chapters = document.metadata.get("chapters", [])
@@ -351,26 +377,24 @@ async def get_document_structure(document_id: str):
 
 
 @router.delete("/{document_id}")
-async def delete_document_from_queue(document_id: str):
+async def delete_document_from_queue(request: Request, document_id: str):
     """
     Delete a document from the queue.
     """
-    success = await delete_document(document_id)
+    success = await delete_document(document_id, _session_id(request))
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"message": "Document deleted"}
 
 
 @router.post("/{document_id}/content")
-async def get_document_content(document_id: str, request: ChapterContentRequest):
+async def get_document_content(document_id: str, body: ChapterContentRequest, request: Request):
     """
     Get full text content for selected chapters.
 
     Concatenates the full_text of requested chapters in chapter_number order.
     """
-    document = await get_document(document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
+    document = await _owned_document(request, document_id)
 
     if document.status != DocumentStatus.READY:
         raise HTTPException(
@@ -384,7 +408,7 @@ async def get_document_content(document_id: str, request: ChapterContentRequest)
     # Filter and sort selected chapters
     selected_chapters = [
         ch for ch in all_chapters
-        if ch.get("chapter_id") in request.chapter_ids
+        if ch.get("chapter_id") in body.chapter_ids
     ]
     selected_chapters.sort(key=lambda x: x.get("chapter_number", 0))
 
@@ -418,7 +442,7 @@ async def get_document_content(document_id: str, request: ChapterContentRequest)
 
     # Check if any requested chapters weren't found
     found_ids = {ch.get("chapter_id") for ch in selected_chapters}
-    missing_ids = set(request.chapter_ids) - found_ids
+    missing_ids = set(body.chapter_ids) - found_ids
 
     return {
         "document_id": document_id,
@@ -434,15 +458,13 @@ async def get_document_content(document_id: str, request: ChapterContentRequest)
 # Job Queue endpoints
 
 @router.post("/job/{document_id}/extract")
-async def submit_job_extraction(document_id: str):
+async def submit_job_extraction(request: Request, document_id: str):
     """
     Submit a document extraction job to the worker queue.
 
     Returns immediately with job_id for status polling.
     """
-    document = await get_document(document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
+    document = await _owned_document(request, document_id)
 
     if document.status == DocumentStatus.EXTRACTING:
         raise HTTPException(status_code=400, detail="Extraction already in progress")
@@ -476,25 +498,21 @@ async def submit_job_extraction(document_id: str):
 
 
 @router.get("/job/{job_id}/status")
-async def get_job_status_endpoint(job_id: str):
+async def get_job_status_endpoint(request: Request, job_id: str):
     """
     Get the status of an extraction job.
     """
-    job = get_job_status(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = await _owned_job(request, job_id)
 
     return job.model_dump()
 
 
 @router.get("/job/{job_id}/result")
-async def get_job_result(job_id: str):
+async def get_job_result(request: Request, job_id: str):
     """
     Get the extraction result from a completed job.
     """
-    job = get_job_status(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = await _owned_job(request, job_id)
 
     if job.status != JobStatus.COMPLETED:
         raise HTTPException(
@@ -506,10 +524,11 @@ async def get_job_result(job_id: str):
 
 
 @router.post("/job/{job_id}/retry")
-async def retry_job_endpoint(job_id: str):
+async def retry_job_endpoint(request: Request, job_id: str):
     """
     Retry a failed extraction job.
     """
+    await _owned_job(request, job_id)
     new_job_id = await retry_job(job_id)
     if not new_job_id:
         raise HTTPException(
@@ -525,10 +544,11 @@ async def retry_job_endpoint(job_id: str):
 
 
 @router.delete("/job/{job_id}")
-async def cancel_job_endpoint(job_id: str):
+async def cancel_job_endpoint(request: Request, job_id: str):
     """
     Cancel a pending or running job.
     """
+    await _owned_job(request, job_id)
     success = cancel_job(job_id)
     if not success:
         raise HTTPException(

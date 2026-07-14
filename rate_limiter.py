@@ -94,6 +94,13 @@ class RateLimiter:
 
         return True, None
 
+    async def check_tts_limits(self, ip: str) -> Tuple[bool, Optional[str]]:
+        for limit, window in ((5, 60), (20, 3600)):
+            allowed, error = await self.check_limit(f"tts:{window}:{ip}", limit, window)
+            if not allowed:
+                return False, f"{limit} TTS requests per {window // 60} minute(s) allowed. {error}"
+        return True, None
+
     async def check_upload_limits(
         self,
         ip: str,

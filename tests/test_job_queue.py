@@ -2,8 +2,6 @@
 import pytest
 import os
 import sys
-import tempfile
-import shutil
 import json
 import time
 from datetime import datetime, UTC
@@ -12,9 +10,7 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Set environment variable before importing module
-os.environ['JOBS_DIR'] = tempfile.mkdtemp()
-
+import job_queue
 from job_queue import (
     JobStatus,
     ExtractionJob,
@@ -28,28 +24,17 @@ from job_queue import (
     _load_job,
     _get_job_path,
     _ensure_jobs_dir,
-    JOBS_DIR
 )
 from file_processor import active_documents
 from models import Document, FileType, DocumentStatus
 
 
 @pytest.fixture(autouse=True)
-def cleanup_jobs():
+def cleanup_jobs(tmp_path):
     """Clean up job storage between tests."""
-    jobs_dir = os.environ.get('JOBS_DIR')
+    job_queue.JOBS_DIR = str(tmp_path)
 
     yield
-
-    # Clean up job files
-    if jobs_dir and os.path.exists(jobs_dir):
-        for filename in os.listdir(jobs_dir):
-            file_path = os.path.join(jobs_dir, filename)
-            try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-            except OSError:
-                pass
 
     # Clear active documents
     active_documents.clear()
@@ -85,7 +70,7 @@ def test_load_nonexistent_job():
 def test_jobs_dir_created():
     """Test that jobs directory is created."""
     _ensure_jobs_dir()
-    assert os.path.exists(JOBS_DIR)
+    assert os.path.exists(job_queue.JOBS_DIR)
 
 
 @pytest.mark.asyncio

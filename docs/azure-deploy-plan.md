@@ -1,6 +1,6 @@
 # Azure Deployment Plan
 
-This is a step-by-step deployment runbook for Story2Audio on Azure using:
+This is a step-by-step deployment runbook for Ebook2Audio on Azure using:
 
 - Azure Container Registry for Docker images
 - Azure Container Apps for the web app and VieNeu worker
@@ -16,17 +16,17 @@ Deploy these runtime components:
 
 ```text
 Internet
-  -> story2audio-app
+  -> ebook2audio-app
       FastAPI + UI + upload/status/download endpoints
       no local VieNeu model initialization
 
-story2audio-app
+ebook2audio-app
   -> Redis
       upload rate limits
       VieNeu queue
       VieNeu cancellation flags
 
-story2audio-vieneu-worker
+ebook2audio-vieneu-worker
   -> Redis
       pulls one VieNeu job at a time
   -> Azure Files
@@ -75,15 +75,15 @@ Use consistent names before creating resources:
 
 ```bash
 LOCATION=eastus
-RESOURCE_GROUP=rg-story2audio-prod
-ACR_NAME=story2audioregistry
-CONTAINER_ENV=cae-story2audio-prod
-APP_NAME=story2audio-app
-WORKER_NAME=story2audio-vieneu-worker
-STORAGE_ACCOUNT=story2audiostorage
-FILE_SHARE=story2audio-share
-LOG_WORKSPACE=law-story2audio-prod
-REDIS_NAME=redis-story2audio-prod
+RESOURCE_GROUP=rg-ebook2audio-prod
+ACR_NAME=ebook2audioregistry
+CONTAINER_ENV=cae-ebook2audio-prod
+APP_NAME=ebook2audio-app
+WORKER_NAME=ebook2audio-vieneu-worker
+STORAGE_ACCOUNT=ebook2audiostorage
+FILE_SHARE=ebook2audio-share
+LOG_WORKSPACE=law-ebook2audio-prod
+REDIS_NAME=redis-ebook2audio-prod
 IMAGE_TAG=v4.0.0
 ```
 
@@ -151,15 +151,15 @@ ACR_LOGIN_SERVER="$(az acr show \
   --resource-group "$RESOURCE_GROUP" \
   --query loginServer -o tsv)"
 
-docker build -t "$ACR_LOGIN_SERVER/story2audio:$IMAGE_TAG" .
-docker push "$ACR_LOGIN_SERVER/story2audio:$IMAGE_TAG"
+docker build -t "$ACR_LOGIN_SERVER/ebook2audio:$IMAGE_TAG" .
+docker push "$ACR_LOGIN_SERVER/ebook2audio:$IMAGE_TAG"
 ```
 
 Optional `latest` tag:
 
 ```bash
-docker tag "$ACR_LOGIN_SERVER/story2audio:$IMAGE_TAG" "$ACR_LOGIN_SERVER/story2audio:latest"
-docker push "$ACR_LOGIN_SERVER/story2audio:latest"
+docker tag "$ACR_LOGIN_SERVER/ebook2audio:$IMAGE_TAG" "$ACR_LOGIN_SERVER/ebook2audio:latest"
+docker push "$ACR_LOGIN_SERVER/ebook2audio:latest"
 ```
 
 Use immutable version tags for production rollbacks. Avoid deploying only `latest`.
@@ -201,7 +201,7 @@ Register the file share with the Container Apps environment:
 az containerapp env storage set \
   --name "$CONTAINER_ENV" \
   --resource-group "$RESOURCE_GROUP" \
-  --storage-name story2audiofiles \
+  --storage-name ebook2audiofiles \
   --storage-type AzureFile \
   --azure-file-account-name "$STORAGE_ACCOUNT" \
   --azure-file-account-key "$STORAGE_KEY" \
@@ -240,7 +240,7 @@ az containerapp create \
   --name "$APP_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --environment "$CONTAINER_ENV" \
-  --image "$ACR_LOGIN_SERVER/story2audio:$IMAGE_TAG" \
+  --image "$ACR_LOGIN_SERVER/ebook2audio:$IMAGE_TAG" \
   --target-port 8000 \
   --ingress external \
   --registry-server "$ACR_LOGIN_SERVER" \
@@ -297,25 +297,25 @@ In `app.yaml`, add an Azure Files volume under `template.volumes`:
 
 ```yaml
 volumes:
-  - name: story2audiofiles
+  - name: ebook2audiofiles
     storageType: AzureFile
-    storageName: story2audiofiles
+    storageName: ebook2audiofiles
 ```
 
 Add volume mounts to the app container:
 
 ```yaml
 volumeMounts:
-  - volumeName: story2audiofiles
+  - volumeName: ebook2audiofiles
     mountPath: /app/audio_cache
     subPath: audio_cache
-  - volumeName: story2audiofiles
+  - volumeName: ebook2audiofiles
     mountPath: /app/documents
     subPath: documents
-  - volumeName: story2audiofiles
+  - volumeName: ebook2audiofiles
     mountPath: /app/jobs
     subPath: jobs
-  - volumeName: story2audiofiles
+  - volumeName: ebook2audiofiles
     mountPath: /root/.cache/huggingface
     subPath: huggingface
 ```
@@ -338,7 +338,7 @@ az containerapp create \
   --name "$WORKER_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --environment "$CONTAINER_ENV" \
-  --image "$ACR_LOGIN_SERVER/story2audio:$IMAGE_TAG" \
+  --image "$ACR_LOGIN_SERVER/ebook2audio:$IMAGE_TAG" \
   --registry-server "$ACR_LOGIN_SERVER" \
   --command "/app/.venv/bin/python" \
   --args "tts_worker.py" \
@@ -502,8 +502,8 @@ Failed to initialize VieNeu model pool
 Keep the previous image tag available, for example:
 
 ```text
-story2audio:v4.0.0
-story2audio:v4.0.1
+ebook2audio:v4.0.0
+ebook2audio:v4.0.1
 ```
 
 Rollback the web app:
@@ -512,7 +512,7 @@ Rollback the web app:
 az containerapp update \
   --name "$APP_NAME" \
   --resource-group "$RESOURCE_GROUP" \
-  --image "$ACR_LOGIN_SERVER/story2audio:v4.0.0"
+  --image "$ACR_LOGIN_SERVER/ebook2audio:v4.0.0"
 ```
 
 Rollback the worker:
@@ -521,15 +521,15 @@ Rollback the worker:
 az containerapp update \
   --name "$WORKER_NAME" \
   --resource-group "$RESOURCE_GROUP" \
-  --image "$ACR_LOGIN_SERVER/story2audio:v4.0.0"
+  --image "$ACR_LOGIN_SERVER/ebook2audio:v4.0.0"
 ```
 
 If Redis queue data is incompatible between versions, drain or clear only the VieNeu queue keys after confirming no active jobs should continue:
 
 ```text
-story2audio:tts:vieneu:queue
-story2audio:tts:vieneu:processing
-story2audio:tts:cancel:<cache_id>
+ebook2audio:tts:vieneu:queue
+ebook2audio:tts:vieneu:processing
+ebook2audio:tts:cancel:<cache_id>
 ```
 
 Do not delete Azure Files during rollback. It contains generated audio, user documents, job files, and model cache.
@@ -548,7 +548,7 @@ Azure Files: 100 GiB quota
 
 Reduce costs by:
 
-- keeping `story2audio-vieneu-worker` at one replica
+- keeping `ebook2audio-vieneu-worker` at one replica
 - keeping `VIENEU_MAX_WORKERS=1`
 - caching Hugging Face models on Azure Files
 - using short test requests during validation

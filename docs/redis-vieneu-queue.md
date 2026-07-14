@@ -1,6 +1,6 @@
 # Redis and VieNeu Queue
 
-This document explains how Redis works with VieNeu-TTS in Story2Audio.
+This document explains how Redis works with VieNeu-TTS in Ebook2Audio.
 
 ## Why Redis Is Used
 
@@ -86,16 +86,16 @@ Defined in `tts_queue.py`.
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| Queue list | `story2audio:tts:vieneu:queue` | Pending VieNeu jobs |
-| Processing list | `story2audio:tts:vieneu:processing` | Job currently reserved by a worker |
-| Cancel prefix | `story2audio:tts:cancel:` | Cancellation flags by `cache_id` |
+| Queue list | `ebook2audio:tts:vieneu:queue` | Pending VieNeu jobs |
+| Processing list | `ebook2audio:tts:vieneu:processing` | Job currently reserved by a worker |
+| Cancel prefix | `ebook2audio:tts:cancel:` | Cancellation flags by `cache_id` |
 
 Override keys with:
 
 ```env
-TTS_QUEUE_KEY=story2audio:tts:vieneu:queue
-TTS_PROCESSING_KEY=story2audio:tts:vieneu:processing
-TTS_CANCEL_PREFIX=story2audio:tts:cancel:
+TTS_QUEUE_KEY=ebook2audio:tts:vieneu:queue
+TTS_PROCESSING_KEY=ebook2audio:tts:vieneu:processing
+TTS_CANCEL_PREFIX=ebook2audio:tts:cancel:
 TTS_CANCEL_TTL_SECONDS=86400
 ```
 
@@ -152,13 +152,13 @@ audio_quality
 6. FastAPI pushes the serialized job to Redis:
 
 ```text
-LPUSH story2audio:tts:vieneu:queue <job-json>
+LPUSH ebook2audio:tts:vieneu:queue <job-json>
 ```
 
 7. Worker reserves the job atomically:
 
 ```text
-BRPOPLPUSH story2audio:tts:vieneu:queue story2audio:tts:vieneu:processing
+BRPOPLPUSH ebook2audio:tts:vieneu:queue ebook2audio:tts:vieneu:processing
 ```
 
 8. Worker runs VieNeu.
@@ -177,7 +177,7 @@ queued -> processing -> generating -> completed
 11. Worker acknowledges the job:
 
 ```text
-LREM story2audio:tts:vieneu:processing 1 <job-json>
+LREM ebook2audio:tts:vieneu:processing 1 <job-json>
 ```
 
 12. Browser streams or downloads the final audio.
@@ -214,7 +214,7 @@ DELETE /tts/file/{cache_id}
 FastAPI writes a Redis cancellation flag:
 
 ```text
-SETEX story2audio:tts:cancel:{cache_id} 86400 1
+SETEX ebook2audio:tts:cancel:{cache_id} 86400 1
 ```
 
 The worker checks this flag before processing the job. The shared generation code also checks cancellation between chunks.
@@ -229,13 +229,13 @@ Important limitation:
 If the worker crashes after reserving a job, the job may remain in:
 
 ```text
-story2audio:tts:vieneu:processing
+ebook2audio:tts:vieneu:processing
 ```
 
 On worker startup, `recover_processing_jobs()` moves in-flight jobs back to:
 
 ```text
-story2audio:tts:vieneu:queue
+ebook2audio:tts:vieneu:queue
 ```
 
 This prevents jobs from being permanently stuck after a worker restart.
@@ -279,20 +279,20 @@ In Azure, mount Azure Files to the same paths.
 View Redis queue length in Docker:
 
 ```bash
-docker compose exec redis redis-cli LLEN story2audio:tts:vieneu:queue
-docker compose exec redis redis-cli LLEN story2audio:tts:vieneu:processing
+docker compose exec redis redis-cli LLEN ebook2audio:tts:vieneu:queue
+docker compose exec redis redis-cli LLEN ebook2audio:tts:vieneu:processing
 ```
 
 Inspect pending jobs:
 
 ```bash
-docker compose exec redis redis-cli LRANGE story2audio:tts:vieneu:queue 0 5
+docker compose exec redis redis-cli LRANGE ebook2audio:tts:vieneu:queue 0 5
 ```
 
 Inspect processing jobs:
 
 ```bash
-docker compose exec redis redis-cli LRANGE story2audio:tts:vieneu:processing 0 5
+docker compose exec redis redis-cli LRANGE ebook2audio:tts:vieneu:processing 0 5
 ```
 
 Watch worker logs:

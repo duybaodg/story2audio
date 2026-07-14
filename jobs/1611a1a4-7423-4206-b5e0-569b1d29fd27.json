@@ -1,1 +1,0 @@
-{"job_id": "1611a1a4-7423-4206-b5e0-569b1d29fd27", "document_id": "test-doc-cancel", "status": "failed", "progress": 0.0, "message": "Job cancelled", "created_at": "2026-07-08 08:45:20.828001+00:00", "started_at": null, "completed_at": "2026-07-08 08:45:20.828281+00:00", "error": "Cancelled by user", "result": null}

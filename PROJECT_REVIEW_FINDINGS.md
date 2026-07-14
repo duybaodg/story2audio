@@ -49,7 +49,7 @@ Scope: backend FastAPI app, document upload/extraction flow, TTS generation, tes
   - Fix: either submit an extraction job after upload completion or change the message/status to reflect queue-based extraction.
 
 - `uv.lock` is stale relative to `pyproject.toml`.
-  - Location: `pyproject.toml:28`, `uv.lock` package metadata near the `story2audio` package section
+  - Location: `pyproject.toml:28`, `uv.lock` package metadata near the `ebook2audio` package section
   - Problem: `pyproject.toml` declares `redis>=5.0.0`, but `uv.lock` does not include Redis in the project dependency metadata.
   - Impact: locked installs can miss a runtime dependency used by `rate_limiter.py` and `main.py`.
   - Fix: intentionally regenerate `uv.lock` with `uv lock` or `uv sync` and commit the resulting lockfile.

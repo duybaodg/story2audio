@@ -1,4 +1,4 @@
-# 🌟 Lịch sử Phát triển (Release Notes) - Story2Audio
+# 🌟 Lịch sử Phát triển (Release Notes) - Ebook2Audio
 
 Dưới đây là tài liệu tổng hợp lại toàn bộ các tính năng, cải tiến và bản vá lỗi từ lúc khởi tạo dự án cho tới nay.
 
@@ -145,7 +145,7 @@ Tập trung nâng cao trải nghiệm tải tệp và tinh chỉnh hệ thống 
 
 ## [v1.0.0] - Phiên bản Khởi tạo (Initial Release)
 
-Phiên bản đầu tiên của Story2Audio với kiến trúc Core FastAPI và Live Streaming.
+Phiên bản đầu tiên của Ebook2Audio với kiến trúc Core FastAPI và Live Streaming.
 
 ### ✨ Tính năng cốt lõi (Core Features)
 - Xây dựng thành công hệ thống **Text-to-Speech (TTS) Web App** dùng **FastAPI**.

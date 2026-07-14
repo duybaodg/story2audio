@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document summarizes the implementation of the Document Upload MVP feature for Story2Audio, which enables users to upload PDF and EPUB files for text-to-speech conversion.
+This document summarizes the implementation of the Document Upload MVP feature for Ebook2Audio, which enables users to upload PDF and EPUB files for text-to-speech conversion.
 
 **Status**: ✅ COMPLETE - All 10 tasks implemented and tested
 

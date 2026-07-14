@@ -1,10 +1,10 @@
 # Project Structure
 
-This document explains the main files and directories in Story2Audio.
+This document explains the main files and directories in Ebook2Audio.
 
 ## Runtime Overview
 
-Story2Audio is a FastAPI web app with a separate VieNeu worker:
+Ebook2Audio is a FastAPI web app with a separate VieNeu worker:
 
 ```text
 Browser
@@ -26,6 +26,43 @@ VieNeu worker
       writes generated audio and metadata
 ```
 
+## Directory Tree
+
+```text
+story2audio/
+├── .github/workflows/
+│   └── ci-cd.yml                 # Test, build, and VPS deployment workflow
+├── docs/                         # Architecture, deployment, and historical plans
+├── models/
+│   ├── document.py               # Upload/document domain models
+│   └── vieneu/assets/voices.json # VieNeu voice registry shown in the UI
+├── static/
+│   ├── app.js                    # Browser behavior and API calls
+│   ├── style.css                 # UI styling
+│   └── favicon.svg
+├── templates/
+│   └── index.html                # Main application page
+├── tests/                        # Pytest regression and integration tests
+├── main.py                       # FastAPI application and TTS orchestration
+├── document_api.py               # Document HTTP endpoints and ownership checks
+├── file_processor.py             # Chunked upload storage and assembly
+├── text_extractor.py             # PDF, EPUB, chapter, and OCR extraction
+├── job_queue.py                  # File-backed document extraction jobs
+├── rate_limiter.py               # Redis upload/TTS rate limits
+├── tts_queue.py                  # Redis VieNeu queue and worker readiness
+├── tts_worker.py                 # Dedicated VieNeu inference process
+├── vieneu_model.py               # VieNeu SDK/model lifecycle
+├── vieneu_audio_quality.py       # Audio normalization and encoding
+├── vietnamese_text_processor.py  # Vietnamese text preparation
+├── Dockerfile                    # Reproducible application image
+├── docker-compose.yml            # App, worker, Redis, and persistent volumes
+├── pyproject.toml                # Project metadata and direct dependencies
+└── uv.lock                       # Exact resolved dependency versions
+```
+
+Ignored runtime directories such as `audio_cache/`, `documents/`, `jobs/`, and
+`obs/` may exist locally but are deliberately omitted from the source tree.
+
 ## Top-Level Files
 
 | Path | Purpose |
@@ -45,6 +82,9 @@ VieNeu worker
 | `Dockerfile` | Python image build, system packages, dependency install, app startup command |
 | `pyproject.toml` | Python project metadata and dependencies |
 | `uv.lock` | Locked dependency graph for `uv` |
+| `.github/workflows/ci-cd.yml` | GitHub Actions CI and VPS deployment after successful `main` checks |
+| `.env.example` | Safe example production/local configuration without credentials |
+| `.gitignore` / `.dockerignore` | Prevent runtime data, credentials, caches, and local tooling files from entering Git or Docker images |
 
 ## Frontend Files
 
@@ -81,7 +121,7 @@ VieNeu model weights are not stored in the repository. They are downloaded/cache
 In Docker Compose this path is backed by:
 
 ```text
-story2audio_models
+ebook2audio_models
 ```
 
 In Azure this should be backed by Azure Files.
@@ -97,7 +137,8 @@ These paths are runtime data, not source code:
 | `jobs/` | Document extraction job files |
 | `.coverage` | Test coverage artifact |
 
-The repository may contain local generated files while developing. Do not treat them as source unless intentionally committed.
+These directories are ignored by Git and Docker. Named volumes preserve them in
+Compose without putting generated or private data in the repository or image.
 
 ## Test Files
 
@@ -108,6 +149,7 @@ The repository may contain local generated files while developing. Do not treat 
 | `tests/test_job_queue.py` | Document extraction job queue tests |
 | `tests/test_models.py` | Model/domain tests |
 | `tests/test_text_extractor.py` | Text extraction tests |
+| `tests/test_tts_queue.py` | VieNeu queue-cap and worker-heartbeat tests |
 | `tests/test_vieneu_reliability.py` | VieNeu configuration and reliability tests |
 | `tests/fixtures/documents/` | Test fixture documentation/data |
 
@@ -159,7 +201,8 @@ For more detail, see [`redis-vieneu-queue.md`](redis-vieneu-queue.md).
 ```text
 POST /document/upload/initiate
   -> rate_limiter.py checks Redis limits
-  -> file_processor.py creates upload session
+  -> main.py assigns an HTTP-only browser session cookie
+  -> file_processor.py creates an owner-bound upload session
 
 POST /document/upload/chunk
   -> file_processor.py stores chunks
@@ -170,8 +213,14 @@ POST /document/upload/complete
   -> text_extractor.py extracts PDF/EPUB/OCR text
 
 GET /document/{id}/extract/stream
+  -> document_api.py verifies browser-session ownership
   -> document_api.py streams extraction progress
 ```
+
+Document IDs are not global authorization. Every queue, upload, document,
+content, extraction-job, and deletion route checks the HTTP-only browser session
+that created the upload. A different browser session receives `404` instead of
+learning whether another user's document exists.
 
 ## Docker Compose Services
 
@@ -207,6 +256,11 @@ Key production setting:
 VIENEU_MAX_WORKERS=1
 ```
 
+After model initialization, the worker writes a readiness marker and refreshes
+a Redis heartbeat. Docker health checks wait for the marker; `/tts/health`
+checks the heartbeat so Redis availability alone cannot make a dead worker look
+ready.
+
 ## Shared Volume Requirements
 
 The app and worker must share these paths:
@@ -221,10 +275,10 @@ The app and worker must share these paths:
 In Compose:
 
 ```text
-story2audio_cache
-story2audio_documents
-story2audio_jobs
-story2audio_models
+ebook2audio_cache
+ebook2audio_documents
+ebook2audio_jobs
+ebook2audio_models
 ```
 
 In Azure:
@@ -255,6 +309,49 @@ That route is disabled by default and should only be enabled for admin/internal 
 ENABLE_GLOBAL_CACHE_CLEAR=true
 ```
 
+## Security and Abuse Controls
+
+The public application uses lightweight anonymous-session isolation rather than
+user accounts:
+
+- an HTTP-only, SameSite browser cookie owns uploaded documents and extraction jobs
+- production HTTPS deployments should set `SESSION_COOKIE_SECURE=true`
+- `X-Forwarded-For` is ignored unless `TRUST_PROXY_HEADERS=true`
+- forwarded headers should only be enabled when port `8000` is firewalled behind a trusted reverse proxy
+- upload initiation and TTS requests are rate-limited in Redis
+- `TTS_MAX_TEXT_LENGTH` bounds each synthesis request
+- `TTS_MAX_QUEUE_SIZE` prevents an unbounded VieNeu backlog
+- `/health` fails when Redis is unavailable
+- `/tts/health` fails when the VieNeu worker heartbeat expires
+
+The audio cache remains shared and content-addressed. Add authenticated accounts
+or API keys if the service needs durable identities, billing, quotas, or stronger
+protection against distributed abuse.
+
+## CI/CD Flow
+
+The workflow in `.github/workflows/ci-cd.yml` runs for pull requests and pushes
+to `main`:
+
+```text
+checkout
+  -> install locked dependencies
+  -> run pytest
+  -> run Python and JavaScript syntax checks
+  -> validate Docker Compose
+  -> build production images
+```
+
+After those checks pass on `main`, the `deploy` job connects to the VPS over SSH,
+fast-forwards the existing checkout, and runs:
+
+```bash
+docker compose up -d --build --remove-orphans --wait
+```
+
+The GitHub `production` environment supplies VPS secrets and can require manual
+approval. See `.github/workflows/ci-cd.yml` for the required secrets and variables.
+
 ## Common Development Commands
 
 Install dependencies:
@@ -284,13 +381,13 @@ docker compose up -d --build
 Run tests:
 
 ```bash
-pytest
+uv run pytest
 ```
 
 Syntax check key Python files:
 
 ```bash
-python -m py_compile main.py tts_queue.py tts_worker.py
+uv run python -m py_compile main.py tts_queue.py tts_worker.py
 ```
 
 Syntax check frontend:

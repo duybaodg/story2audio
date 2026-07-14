@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Story2Audio is a FastAPI app with a separate VieNeu worker. Core backend code lives at the repository root:
+Ebook2Audio is a FastAPI app with a separate VieNeu worker. Core backend code lives at the repository root:
 
 - `main.py` — FastAPI app, TTS routes, streaming, cache metadata.
 - `tts_queue.py` / `tts_worker.py` — Redis-backed VieNeu queue and worker.

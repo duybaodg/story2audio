@@ -16,7 +16,13 @@ import sys
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from vieneu_model import get_pool_size, get_pool_info, get_vieneu_config, initialize_model_pool
+from vieneu_model import (
+    create_vieneu_instance,
+    get_pool_size,
+    get_pool_info,
+    get_vieneu_config,
+    initialize_model_pool,
+)
 
 
 class TestVieneuModelPool:
@@ -53,6 +59,19 @@ class TestVieneuModelPool:
 
         assert config["mode"] == "v3_turbo"
         assert config["kwargs"] == {}
+
+    @pytest.mark.parametrize(
+        ("variant", "precision"),
+        [("v3_turbo", "fp32"), ("v3_turbo_int8", "int8")],
+    )
+    def test_selectable_v3_precision(self, monkeypatch, variant, precision):
+        calls = []
+
+        monkeypatch.setattr("vieneu.Vieneu", lambda **kwargs: calls.append(kwargs) or object())
+
+        create_vieneu_instance(variant)
+
+        assert calls == [{"mode": "v3turbo", "precision": precision}]
 
     def test_v2_turbo_config_uses_turbo_cpu_args(self, monkeypatch):
         """Test that legacy v2 Turbo mode remains available explicitly."""
@@ -194,5 +213,7 @@ class TestVieneuIntegration:
         from main import validate_voice
 
         assert validate_voice("vi", "vieneu:Trúc Ly", "vieneu") == "vieneu:Trúc Ly"
+        for voice in ("Minh Triết", "Thùy Dung", "Quang Sơn", "Ngọc Trân"):
+            assert validate_voice("vi", f"vieneu:{voice}", "vieneu") == f"vieneu:{voice}"
         with pytest.raises(HTTPException):
             validate_voice("vi", "vieneu:Đức Trí", "vieneu")

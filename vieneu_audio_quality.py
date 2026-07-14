@@ -17,7 +17,7 @@ import numpy as np
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
-logger = logging.getLogger("story2audio")
+logger = logging.getLogger("ebook2audio")
 
 
 # Configuration constants

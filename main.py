@@ -3,6 +3,7 @@ import io
 import re
 import sys
 import json
+import math
 import time
 import logging
 import hashlib
@@ -10,8 +11,9 @@ import asyncio
 import unicodedata
 import threading
 import traceback
+import secrets
 from datetime import timedelta
-from typing import List, Dict, AsyncGenerator, Optional, Tuple, Union
+from typing import List, Dict, AsyncGenerator, Literal, Optional, Tuple, Union
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
@@ -37,7 +39,9 @@ from tts_queue import (
     TTSQueueError,
     enqueue_vieneu_tts_job,
     is_vieneu_cancelled_sync,
+    redis_is_ready,
     request_vieneu_cancel,
+    vieneu_worker_is_ready,
 )
 
 load_dotenv()
@@ -83,12 +87,39 @@ app = FastAPI(title="Story to Audio + Live Subtitles API")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(document_router)
 
-logger = logging.getLogger("story2audio")
+logger = logging.getLogger("ebook2audio")
 
 # ---------------------------------------------------------------------------
 # Rate Limiter
 # ---------------------------------------------------------------------------
 rate_limiter = RateLimiter()
+
+
+def get_client_ip(request: Request) -> str:
+    if TRUST_PROXY_HEADERS:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.middleware("http")
+async def browser_session_middleware(request: Request, call_next):
+    session_id = request.cookies.get("story2audio_session")
+    if not session_id or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", session_id):
+        session_id = secrets.token_urlsafe(32)
+    request.state.session_id = session_id
+    response = await call_next(request)
+    if request.cookies.get("story2audio_session") != session_id:
+        response.set_cookie(
+            "story2audio_session",
+            session_id,
+            max_age=60 * 60 * 24 * 30,
+            httponly=True,
+            secure=SESSION_COOKIE_SECURE,
+            samesite="lax",
+        )
+    return response
 
 
 @app.middleware("http")
@@ -105,13 +136,7 @@ async def rate_limit_middleware(request: Request, call_next):
         limiter = app.state.rate_limiter if hasattr(app.state, 'rate_limiter') else None
 
         if limiter:
-            # Get client IP
-            # Check for forwarded headers (proxy/load balancer)
-            forwarded_for = request.headers.get("X-Forwarded-For")
-            if forwarded_for:
-                ip = forwarded_for.split(",")[0].strip()
-            else:
-                ip = request.client.host if request.client else "unknown"
+            ip = get_client_ip(request)
 
             # Check limits (no session_id for initiate endpoint)
             allowed, error = await limiter.check_upload_limits(ip, session_id=None)
@@ -122,6 +147,12 @@ async def rate_limit_middleware(request: Request, call_next):
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     content={"detail": error}
                 )
+    elif request.url.path == "/tts/start":
+        limiter = app.state.rate_limiter if hasattr(app.state, "rate_limiter") else None
+        if limiter:
+            allowed, error = await limiter.check_tts_limits(get_client_ip(request))
+            if not allowed:
+                return JSONResponse(status_code=429, content={"detail": error})
 
     return await call_next(request)
 
@@ -177,12 +208,15 @@ async def verify_session(cache_id: str):
 # Config
 # ---------------------------------------------------------------------------
 PROXY = os.getenv("PROXY")
+TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "").lower() in {"1", "true", "yes"}
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "").lower() in {"1", "true", "yes"}
 ENABLE_DEBUG_TTS = os.getenv("ENABLE_DEBUG_TTS", "").lower() in {"1", "true", "yes"}
 VIENEU_MAX_WORKERS = get_pool_size()
 TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS = int(os.getenv("TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS", "300"))
 VIENEU_INIT_IN_WEB = os.getenv("VIENEU_INIT_IN_WEB", "").lower() in {"1", "true", "yes"}
 ENABLE_GLOBAL_CACHE_CLEAR = os.getenv("ENABLE_GLOBAL_CACHE_CLEAR", "").lower() in {"1", "true", "yes"}
 AUDIO_CACHE_RETENTION_HOURS = int(os.getenv("AUDIO_CACHE_RETENTION_HOURS", "12"))
+TTS_MAX_TEXT_LENGTH = int(os.getenv("TTS_MAX_TEXT_LENGTH", "100000"))
 
 if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
@@ -330,6 +364,7 @@ class TTSRequest(BaseModel):
     engine: str = "edge"   # edge | gtts
     language: str = "vi"
     audio_quality: AudioQuality = "standard"
+    model: Optional[Literal["v3_turbo", "v3_turbo_int8"]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +379,25 @@ def get_cache_id(text: str, voice: str, engine: str, language: str, variant: str
     if variant:
         raw = f"{raw}_{variant}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def estimate_conversion_seconds(
+    text: str,
+    engine: str,
+    model: Optional[str] = None,
+    chunk_count: int = 1,
+) -> int:
+    """Return a conservative conversion estimate for an average CPU server."""
+    chars_per_second = {
+        "edge": 45.0,
+        "gtts": 35.0,
+        "v3_turbo": 2.5,
+        "v3_turbo_int8": 7.5,
+    }
+    profile = model if engine == "vieneu" else engine
+    rate = chars_per_second.get(profile or "v3_turbo", 2.5)
+    startup_seconds = 8 if engine == "vieneu" else max(2, chunk_count)
+    return max(3, math.ceil(len(text) / rate + startup_seconds))
 
 
 def get_audio_path(cache_id: str, extension: str = "mp3") -> str:
@@ -523,6 +577,31 @@ def is_cache_valid(cache_id: str, require_subtitles: bool = False) -> bool:
     return True
 
 
+def add_remaining_time(status: dict) -> dict:
+    estimate = status.get("estimated_seconds")
+    if estimate is None:
+        return status
+
+    if status.get("status") in {"completed", "failed", "stopped"}:
+        status["remaining_seconds"] = 0
+        return status
+
+    started_at = status.get("started_at")
+    if not started_at:
+        status["remaining_seconds"] = estimate
+        return status
+
+    elapsed = max(0.0, time.time() - float(started_at))
+    progress = int(status.get("progress") or 0)
+    total = int(status.get("total") or 0)
+    if 0 < progress < total:
+        remaining = elapsed / progress * (total - progress)
+    else:
+        remaining = float(estimate) - elapsed
+    status["remaining_seconds"] = max(1, math.ceil(remaining))
+    return status
+
+
 def get_effective_status(cache_id: str) -> Optional[dict]:
     audio_path = get_audio_path(cache_id)
     file_size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
@@ -531,21 +610,21 @@ def get_effective_status(cache_id: str) -> Optional[dict]:
     if in_mem and in_mem.get("status") in {"queued", "processing", "generating", "stopped"}:
         status = dict(in_mem)
         status["file_size"] = file_size
-        return status
+        return add_remaining_time(status)
 
     meta = load_cache_meta(cache_id)
     if meta:
         status = dict(meta)
         status["file_size"] = file_size
-        return status
+        return add_remaining_time(status)
 
     if is_cache_valid(cache_id):
-        return {
+        return add_remaining_time({
             "status": "completed",
             "progress": 1,
             "total": 1,
             "file_size": file_size,
-        }
+        })
 
     return None
 
@@ -1245,6 +1324,7 @@ async def vieneu_tts_to_audio(
     audio_quality: AudioQuality = "standard",
     add_natural_pauses: bool = True,
     pause_duration_ms: int = 300,
+    model: Optional[str] = None,
 ) -> tuple[bytes, str]:
     """
     Generate audio using VieNeu-TTS with quality enhancements.
@@ -1266,7 +1346,7 @@ async def vieneu_tts_to_audio(
 
     def _generate():
         # Acquire model lock for inference
-        with get_vieneu_model() as tts:
+        with get_vieneu_model(model) as tts:
             try:
                 voice_arg = resolve_vieneu_voice_arg(tts, voice)
                 if voice_arg:
@@ -1295,6 +1375,7 @@ def vieneu_tts_to_audio_sync(
     audio_quality: AudioQuality = "standard",
     add_natural_pauses: bool = True,
     pause_duration_ms: int = 300,
+    model: Optional[str] = None,
 ) -> tuple[bytes, str]:
     """
     Synchronous wrapper for VieNeu TTS with quality enhancements.
@@ -1313,7 +1394,7 @@ def vieneu_tts_to_audio_sync(
     from vieneu_model import get_vieneu_model
 
     # Acquire model lock for inference
-    with get_vieneu_model() as tts:
+    with get_vieneu_model(model) as tts:
         try:
             voice_arg = resolve_vieneu_voice_arg(tts, voice)
             if voice_arg:
@@ -1369,6 +1450,7 @@ def generate_chunks_sync(
     audio_quality: AudioQuality = "standard",
     add_natural_pauses: bool = True,
     pause_duration_ms: int = 300,
+    model: Optional[str] = None,
 ):
     """
     Synchronous wrapper for generate_chunks to use with BackgroundTasks.
@@ -1398,6 +1480,7 @@ def generate_chunks_sync(
                 audio_quality=audio_quality,
                 add_natural_pauses=add_natural_pauses,
                 pause_duration_ms=pause_duration_ms,
+                model=model,
             )
         )
         print(f"[BG-TASK] Completed generate_chunks for {cache_id}")
@@ -1421,6 +1504,7 @@ async def generate_chunks(
     audio_quality: AudioQuality = "standard",
     add_natural_pauses: bool = True,
     pause_duration_ms: int = 300,
+    model: Optional[str] = None,
 ):
     if cache_id not in _generation_locks:
         _generation_locks[cache_id] = asyncio.Lock()
@@ -1456,6 +1540,7 @@ async def generate_chunks(
                     "text_hash": md5_short(text),
                     "voice": voice,
                     "engine": engine,
+                    "model": model if engine == "vieneu" else None,
                     "language": language,
                     "subtitle_supported": engine == "edge",
                     "subtitle_ready": False,
@@ -1465,8 +1550,13 @@ async def generate_chunks(
             return
 
         total = len(chunks)
+        timing_meta = {
+            "estimated_seconds": estimate_conversion_seconds(text, engine, model, total),
+            "started_at": time.time(),
+        }
 
         generation_status[cache_id] = {
+            **timing_meta,
             "status": "processing",
             "progress": 0,
             "total": total,
@@ -1477,12 +1567,14 @@ async def generate_chunks(
         save_cache_meta(
             cache_id,
             {
+                **timing_meta,
                 "status": "processing",
                 "progress": 0,
                 "total": total,
                 "text_hash": md5_short(text),
                 "voice": voice,
                 "engine": engine,
+                "model": model if engine == "vieneu" else None,
                 "language": language,
                 "subtitle_supported": engine == "edge",
                 "subtitle_ready": False,
@@ -1502,12 +1594,14 @@ async def generate_chunks(
                     save_cache_meta(
                         cache_id,
                         {
+                            **timing_meta,
                             "status": "stopped",
                             "progress": i,
                             "total": total,
                             "text_hash": md5_short(text),
                             "voice": voice,
                             "engine": engine,
+                            "model": model if engine == "vieneu" else None,
                             "language": language,
                             "subtitle_supported": engine == "edge",
                             "subtitle_ready": False,
@@ -1523,12 +1617,14 @@ async def generate_chunks(
                 save_cache_meta(
                     cache_id,
                     {
+                        **timing_meta,
                         "status": "generating",
                         "progress": i,
                         "total": total,
                         "text_hash": md5_short(text),
                         "voice": voice,
                         "engine": engine,
+                        "model": model if engine == "vieneu" else None,
                         "language": language,
                         "subtitle_supported": engine == "edge",
                         "subtitle_ready": False,
@@ -1548,6 +1644,7 @@ async def generate_chunks(
                         audio_quality,
                         add_natural_pauses,
                         pause_duration_ms if i < total - 1 else 0,  # No pause on last chunk
+                        model,
                     )
                     words = []  # VieNeu doesn't provide word-level timing
                 else:  # gtts
@@ -1592,6 +1689,7 @@ async def generate_chunks(
                 save_cache_meta(
                     cache_id,
                     {
+                        **timing_meta,
                         "status": "processing",
                         "progress": i + 1,
                         "total": total,
@@ -1599,6 +1697,7 @@ async def generate_chunks(
                         "text_hash": md5_short(text),
                         "voice": voice,
                         "engine": engine,
+                        "model": model if engine == "vieneu" else None,
                         "language": language,
                         "subtitle_supported": engine == "edge",
                         "subtitle_ready": False,
@@ -1621,6 +1720,7 @@ async def generate_chunks(
             save_cache_meta(
                 cache_id,
                 {
+                    **timing_meta,
                     "status": "completed",
                     "progress": total,
                     "total": total,
@@ -1628,6 +1728,7 @@ async def generate_chunks(
                     "text_hash": md5_short(text),
                     "voice": voice,
                     "engine": engine,
+                    "model": model if engine == "vieneu" else None,
                     "language": language,
                     "subtitle_supported": engine == "edge",
                     "subtitle_ready": subtitle_ready,
@@ -1645,11 +1746,13 @@ async def generate_chunks(
             save_cache_meta(
                 cache_id,
                 {
+                    **timing_meta,
                     "status": "failed",
                     "error": err,
                     "text_hash": md5_short(text),
                     "voice": voice,
                     "engine": engine,
+                    "model": model if engine == "vieneu" else None,
                     "language": language,
                     "subtitle_supported": engine == "edge",
                     "subtitle_ready": False,
@@ -1696,13 +1799,11 @@ async def get_voices():
 
 @app.get("/tts/health")
 async def health_check():
-    """Check if VieNeu model pool is ready."""
-    from vieneu_model import get_pool_info
-    pool_info = get_pool_info()
-    return {
-        "vieneu_ready": pool_info["warmed_up"],
-        "pool_size": pool_info["pool_size"]
-    }
+    ready = await vieneu_worker_is_ready()
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"vieneu_ready": ready, "mode": "redis-worker"},
+    )
 
 
 @app.post("/tts/start")
@@ -1721,6 +1822,11 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
 
     if not text_to_process:
         raise HTTPException(status_code=400, detail="Text must not be empty")
+    if len(text_to_process) > TTS_MAX_TEXT_LENGTH:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Text exceeds the {TTS_MAX_TEXT_LENGTH} character limit",
+        )
 
     language = validate_language(request.language)
 
@@ -1737,7 +1843,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
     if audio_quality == "lossless":
         audio_quality = "high"
 
-    cache_variant = audio_quality if engine == "vieneu" else ""
+    cache_variant = f"{request.model or 'configured'}:{audio_quality}" if engine == "vieneu" else ""
     cache_id = get_cache_id(text_to_process, voice, engine, language, cache_variant)
     require_subtitles = engine == "edge"
 
@@ -1763,6 +1869,12 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
         cleanup_incomplete_cache(cache_id)
 
     chunk_preview = split_text_for_engine(text_to_process, engine=engine, language=language)
+    estimated_seconds = estimate_conversion_seconds(
+        text_to_process,
+        engine,
+        request.model,
+        len(chunk_preview),
+    )
 
     queued_meta = {
         "status": "queued",
@@ -1771,6 +1883,8 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
         "text_hash": md5_short(text_to_process),
         "voice": voice,
         "engine": engine,
+        "model": request.model if engine == "vieneu" else None,
+        "estimated_seconds": estimated_seconds,
         "language": language,
         "subtitle_supported": engine == "edge",
         "subtitle_ready": False,
@@ -1789,6 +1903,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
                     "language": language,
                     "chunks": chunk_preview,
                     "audio_quality": audio_quality,
+                    "model": request.model,
                 }
             )
         except TTSQueueError as exc:
@@ -1806,6 +1921,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
             "status": "queued",
             "progress": 0,
             "total": len(chunk_preview),
+            "estimated_seconds": estimated_seconds,
             "subtitle_supported": engine == "edge",
             "subtitle_ready": False,
             "subtitle_cues": 0,
@@ -1827,6 +1943,7 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
         "cache_id": cache_id,
         "status": "started",
         "estimated_chunks": len(chunk_preview),
+        "estimated_seconds": estimated_seconds,
         "subtitle_supported": engine == "edge",
         "subtitle_ready": False,
     }
@@ -2250,7 +2367,11 @@ async def debug_chunks(request: TTSRequest):
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health():
-    return {"ok": True, "version": VERSION}
+    ready = await redis_is_ready()
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"ok": ready, "version": VERSION, "redis": ready},
+    )
 
 @app.on_event("startup")
 async def startup_event():

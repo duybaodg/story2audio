@@ -1,12 +1,12 @@
-# Story2Audio 🎧
+# Ebook2Audio 🎧
 
 **Miễn phí · Không giới hạn · Không cần đăng ký**
 
-Story2Audio chuyển đổi văn bản, truyện, bài báo... thành âm thanh tự nhiên với **phụ đề trực tiếp**. Bạn có thể dán bất kỳ nội dung nào — từ một câu ngắn đến cả cuốn tiểu thuyết — và bắt đầu nghe ngay lập tức.
+Ebook2Audio chuyển đổi văn bản, truyện, bài báo... thành âm thanh tự nhiên với **phụ đề trực tiếp**. Bạn có thể dán bất kỳ nội dung nào — từ một câu ngắn đến cả cuốn tiểu thuyết — và bắt đầu nghe ngay lập tức.
 
-> 🌐 **Demo trực tiếp:** [story2audio.hoctuthien.com](https://story2audio.hoctuthien.com)
+> 🌐 **Demo trực tiếp:** [ebook2audio.hoctuthien.com](https://ebook2audio.hoctuthien.com)
 
-## ✨ Tại sao nên dùng Story2Audio?
+## ✨ Tại sao nên dùng Ebook2Audio?
 
 - 🆓 **Hoàn toàn miễn phí** — Sử dụng công nghệ Edge TTS của Microsoft, không tốn phí, không cần API key.
 - 📝 **Không giới hạn độ dài văn bản** — Dán một câu hay cả cuốn tiểu thuyết đều được. Văn bản dài sẽ được chia nhỏ tự động.
@@ -96,14 +96,14 @@ for line in response.iter_lines():
 ## 🚀 Sử dụng
 
 ### Trực tuyến
-Truy cập [story2audio.hoctuthien.com](https://story2audio.hoctuthien.com), dán văn bản, chọn ngôn ngữ và giọng đọc, rồi bấm **Chuyển thành audio**.
+Truy cập [ebook2audio.hoctuthien.com](https://ebook2audio.hoctuthien.com), dán văn bản, chọn ngôn ngữ và giọng đọc, rồi bấm **Chuyển thành audio**.
 
 ### Tự host (Self-host)
 
 **Docker Compose (Khuyến nghị):**
 ```bash
-git clone https://github.com/dvchd/story2audio.git
-cd story2audio
+git clone https://github.com/dvchd/ebook2audio.git
+cd ebook2audio
 docker compose up -d --build
 ```
 Truy cập `http://localhost:8000` để sử dụng.

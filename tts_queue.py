@@ -11,10 +11,13 @@ except ImportError:  # pragma: no cover - app dependency should provide redis
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-TTS_QUEUE_KEY = os.getenv("TTS_QUEUE_KEY", "story2audio:tts:vieneu:queue")
-TTS_PROCESSING_KEY = os.getenv("TTS_PROCESSING_KEY", "story2audio:tts:vieneu:processing")
-TTS_CANCEL_PREFIX = os.getenv("TTS_CANCEL_PREFIX", "story2audio:tts:cancel:")
+TTS_QUEUE_KEY = os.getenv("TTS_QUEUE_KEY", "ebook2audio:tts:vieneu:queue")
+TTS_PROCESSING_KEY = os.getenv("TTS_PROCESSING_KEY", "ebook2audio:tts:vieneu:processing")
+TTS_CANCEL_PREFIX = os.getenv("TTS_CANCEL_PREFIX", "ebook2audio:tts:cancel:")
 TTS_CANCEL_TTL_SECONDS = int(os.getenv("TTS_CANCEL_TTL_SECONDS", "86400"))
+TTS_MAX_QUEUE_SIZE = int(os.getenv("TTS_MAX_QUEUE_SIZE", "20"))
+TTS_WORKER_HEARTBEAT_KEY = os.getenv("TTS_WORKER_HEARTBEAT_KEY", "ebook2audio:tts:vieneu:worker")
+TTS_WORKER_HEARTBEAT_TTL_SECONDS = int(os.getenv("TTS_WORKER_HEARTBEAT_TTL_SECONDS", "30"))
 
 
 class TTSQueueError(RuntimeError):
@@ -52,9 +55,32 @@ async def get_async_client():
 async def enqueue_vieneu_tts_job(job: Dict[str, Any]) -> None:
     client = await get_async_client()
     try:
+        # ponytail: single-web-process queue cap; use an atomic Lua check if web replicas are added.
+        if await client.llen(TTS_QUEUE_KEY) >= TTS_MAX_QUEUE_SIZE:
+            raise TTSQueueError("VieNeu queue is full; try again later")
         await client.lpush(TTS_QUEUE_KEY, _serialize_job(job))
     except Exception as exc:
         raise TTSQueueError(f"Unable to enqueue VieNeu TTS job: {exc}") from exc
+    finally:
+        await client.aclose()
+
+
+async def redis_is_ready() -> bool:
+    client = await get_async_client()
+    try:
+        return bool(await client.ping())
+    except Exception:
+        return False
+    finally:
+        await client.aclose()
+
+
+async def vieneu_worker_is_ready() -> bool:
+    client = await get_async_client()
+    try:
+        return bool(await client.get(TTS_WORKER_HEARTBEAT_KEY))
+    except Exception:
+        return False
     finally:
         await client.aclose()
 

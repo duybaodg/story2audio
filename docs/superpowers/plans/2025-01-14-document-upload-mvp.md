@@ -13,7 +13,7 @@
 ## File Structure
 
 ```
-story2audio/
+ebook2audio/
 ├── models/
 │   ├── document.py              # NEW: Document, Chapter, UploadSession models
 │   └── __init__.py              # MODIFY: Export new models

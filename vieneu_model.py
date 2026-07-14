@@ -20,7 +20,7 @@ from threading import Lock
 from typing import Optional, List, Tuple, Dict
 from contextlib import contextmanager
 
-logger = logging.getLogger("story2audio")
+logger = logging.getLogger("ebook2audio")
 
 # Path to local voices.json
 _VIENEU_VOICES_PATH = os.path.join(
@@ -35,6 +35,7 @@ _VIENEU_VOICES_PATH = os.path.join(
 _model_pool: List[Tuple["Vieneu", Lock]] = []  # (model, lock) tuples
 _pool_lock = Lock()
 _warmed_up = False
+_active_model_variant: Optional[str] = None
 
 # VieNeu defaults. v3 Turbo is the default SDK path; v2 modes remain available
 # for compatibility by setting VIENEU_MODE=v2_standard, v2_turbo, or v2_turbo_gpu.
@@ -48,6 +49,10 @@ VIENEU_CODEC_REPO = "pnnbao-ump/VieNeu-Codec"
 VIENEU_DECODER_FILENAME = "vieneu_decoder.onnx"
 VIENEU_ENCODER_FILENAME = "vieneu_encoder.onnx"
 DEFAULT_CODEC_REPO = "neuphonic/neucodec-onnx-decoder-int8"
+VIENEU_MODEL_PRECISIONS = {
+    "v3_turbo": "fp32",
+    "v3_turbo_int8": "int8",
+}
 
 # Warmup configuration
 WARMUP_ITERATIONS = int(os.getenv("VIENEU_WARMUP_ITERATIONS", "5"))
@@ -122,9 +127,16 @@ def get_public_vieneu_config() -> Dict[str, object]:
     return {"mode": config["mode"], "kwargs": kwargs}
 
 
-def create_vieneu_instance():
+def create_vieneu_instance(model_variant: Optional[str] = None):
     """Create a VieNeu SDK instance using the configured model."""
     from vieneu import Vieneu
+
+    if model_variant:
+        try:
+            precision = VIENEU_MODEL_PRECISIONS[model_variant]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported VieNeu model: {model_variant}") from exc
+        return Vieneu(mode="v3turbo", precision=precision)
 
     config = get_vieneu_config()
     if config["mode"] == "v3_turbo":
@@ -146,12 +158,12 @@ def get_pool_size() -> int:
     return 1
 
 
-def _create_model_pool(size: int) -> List[Tuple["Vieneu", Lock]]:
+def _create_model_pool(size: int, model_variant: Optional[str] = None) -> List[Tuple["Vieneu", Lock]]:
     """Create a pool of VieNeu model instances, each with its own lock."""
     pool = []
     config = get_vieneu_config()
     for i in range(size):
-        model = create_vieneu_instance()
+        model = create_vieneu_instance(model_variant)
         model_lock = Lock()  # Each model has its own lock
         pool.append((model, model_lock))
         print(f"[STARTUP] VieNeu model instance {i + 1}/{size} created ({config['mode']})")
@@ -159,21 +171,21 @@ def _create_model_pool(size: int) -> List[Tuple["Vieneu", Lock]]:
     return pool
 
 
-def initialize_model_pool() -> None:
+def initialize_model_pool(model_variant: Optional[str] = None) -> None:
     """
     Initialize the model pool and warm up all instances.
 
     Should be called once at application startup.
     Thread-safe - can be called multiple times safely.
     """
-    global _model_pool, _warmed_up
+    global _model_pool, _warmed_up, _active_model_variant
 
-    if _warmed_up:
+    if _warmed_up and _active_model_variant == model_variant:
         return
 
     with _pool_lock:
         # Double-check lock
-        if _warmed_up:
+        if _warmed_up and _active_model_variant == model_variant:
             return
 
         try:
@@ -187,7 +199,7 @@ def initialize_model_pool() -> None:
             )
 
             # Create the pool with locks
-            _model_pool = _create_model_pool(pool_size)
+            _model_pool = _create_model_pool(pool_size, model_variant)
 
             # Warm up each model (using the model's lock)
             logger.info("Warming up VieNeu models...")
@@ -204,6 +216,7 @@ def initialize_model_pool() -> None:
                     logger.warning(f"Model {i + 1} warmup failed: {e}")
 
             _warmed_up = True
+            _active_model_variant = model_variant
             logger.info(f"VieNeu model pool initialized and warmed up ({pool_size} instances)")
 
         except Exception as e:
@@ -212,7 +225,7 @@ def initialize_model_pool() -> None:
 
 
 @contextmanager
-def get_vieneu_model():
+def get_vieneu_model(model_variant: Optional[str] = None):
     """
     Get a VieNeu model instance with automatic lock management.
 
@@ -231,8 +244,11 @@ def get_vieneu_model():
     Yields:
         Vieneu: A model instance
     """
+    if not _warmed_up or _active_model_variant != model_variant:
+        initialize_model_pool(model_variant)
+
     # Try to use the pool first
-    if _warmed_up and _model_pool:
+    if _model_pool:
         # Select model based on thread ID (consistent assignment per thread)
         thread_id = threading.get_ident()
         pool_size = len(_model_pool)
@@ -246,7 +262,7 @@ def get_vieneu_model():
 
     # Fallback: create a new instance if pool is not available
     logger.warning("Model pool not available, creating new instance")
-    model = create_vieneu_instance()
+    model = create_vieneu_instance(model_variant)
     # Warm up with at least 1 inference to avoid cold start delay
     try:
         model.infer(WARMUP_TEXT)
@@ -256,7 +272,7 @@ def get_vieneu_model():
     yield model
 
 
-def get_vieneu_model_sync() -> "Vieneu":
+def get_vieneu_model_sync(model_variant: Optional[str] = None) -> "Vieneu":
     """
     Get a VieNeu model instance WITHOUT lock management.
 
@@ -266,7 +282,9 @@ def get_vieneu_model_sync() -> "Vieneu":
     Returns:
         Vieneu: A model instance (use with caution in threaded contexts)
     """
-    if _warmed_up and _model_pool:
+    if not _warmed_up or _active_model_variant != model_variant:
+        initialize_model_pool(model_variant)
+    if _model_pool:
         thread_id = threading.get_ident()
         pool_size = len(_model_pool)
         model_index = thread_id % pool_size
@@ -274,7 +292,7 @@ def get_vieneu_model_sync() -> "Vieneu":
         return model
 
     # Fallback
-    return create_vieneu_instance()
+    return create_vieneu_instance(model_variant)
 
 
 def is_warmed_up() -> bool:
@@ -290,6 +308,7 @@ def get_pool_info() -> dict:
         "max_workers": get_pool_size(),
         "model_version": get_public_vieneu_config()["mode"],
         "config": get_public_vieneu_config(),
+        "active_model": _active_model_variant,
     }
 
 
@@ -300,10 +319,11 @@ def reset_model_pool() -> None:
     Primarily for testing purposes. Allows re-creating
     the model pool from scratch.
     """
-    global _model_pool, _warmed_up
+    global _model_pool, _warmed_up, _active_model_variant
     with _pool_lock:
         _model_pool = []
         _warmed_up = False
+        _active_model_variant = None
         logger.info("VieNeu model pool reset")
 
 

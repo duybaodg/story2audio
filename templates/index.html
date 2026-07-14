@@ -11,7 +11,7 @@
     <div class="app-shell">
         <header class="app-topbar">
             <div>
-                <h1>Story2Audio</h1>
+                <h1>Ebook2Audio</h1>
                 <div class="version">Phiên bản __APP_VERSION__</div>
             </div>
             <div class="topbar-status">
@@ -148,6 +148,15 @@
                             <label for="voice">Voice</label>
                             <select id="voice" name="voice"></select>
                             <small id="engineIndicator"></small>
+                        </div>
+
+                        <div class="ctrl-group" id="modelGroup" style="display: none;">
+                            <label for="model">Model</label>
+                            <select id="model" name="model">
+                                <option value="v3_turbo">VieNeu Turbo v3</option>
+                                <option value="v3_turbo_int8">VieNeu Turbo v3 (INT8)</option>
+                            </select>
+                            <small>INT8 dùng ít bộ nhớ hơn và chạy nhanh hơn trên CPU.</small>
                         </div>
 
                         <div class="ctrl-group" id="audioQualityGroup">

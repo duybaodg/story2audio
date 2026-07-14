@@ -204,7 +204,8 @@ def _remove_file(path: str) -> None:
 async def initiate_upload(
     filename: str,
     file_size: int,
-    checksum: str
+    checksum: str,
+    owner_session: Optional[str] = None,
 ) -> UploadSession:
     """
     Initiate a chunked upload session.
@@ -227,6 +228,7 @@ async def initiate_upload(
             session.filename == safe_filename
             and session.total_size == file_size
             and session.checksum == expected_checksum
+            and session.owner_session == owner_session
         ):
             return session
 
@@ -240,7 +242,8 @@ async def initiate_upload(
         total_size=file_size,
         chunk_size=config['UPLOAD_CHUNK_SIZE'],
         temp_dir=temp_dir,
-        checksum=expected_checksum
+        checksum=expected_checksum,
+        owner_session=owner_session,
     )
 
     # Persist session to disk
@@ -378,6 +381,7 @@ async def complete_upload(upload_id: str) -> Document:
         file_type=file_type,
         file_size=session.total_size,
         file_path=final_path,
+        owner_session=session.owner_session,
         metadata={"checksum": session.checksum}
     )
 
@@ -395,16 +399,19 @@ async def complete_upload(upload_id: str) -> Document:
 
     return document
 
-async def get_document(document_id: str) -> Optional[Document]:
+async def get_document(document_id: str, owner_session: Optional[str] = None) -> Optional[Document]:
     """Get document by ID."""
-    return active_documents.get(document_id)
+    document = active_documents.get(document_id)
+    if document and owner_session is not None and document.owner_session != owner_session:
+        return None
+    return document
 
-async def get_queue() -> List[Dict]:
+async def get_queue(owner_session: Optional[str] = None) -> List[Dict]:
     """Get all documents in queue with their info."""
     queue_items = []
     for doc_id in document_queue:
         doc = active_documents.get(doc_id)
-        if doc:
+        if doc and (owner_session is None or doc.owner_session == owner_session):
             queue_items.append({
                 "document_id": doc_id,
                 "filename": doc.filename,
@@ -416,10 +423,10 @@ async def get_queue() -> List[Dict]:
             })
     return queue_items
 
-async def delete_document(document_id: str) -> bool:
+async def delete_document(document_id: str, owner_session: Optional[str] = None) -> bool:
     """Delete a document and its files."""
     doc = active_documents.get(document_id)
-    if not doc:
+    if not doc or (owner_session is not None and doc.owner_session != owner_session):
         return False
 
     # Remove from queue

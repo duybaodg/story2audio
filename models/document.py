@@ -29,6 +29,7 @@ class UploadSession(BaseModel):
     received_chunks: Set[int] = Field(default_factory=set)
     temp_dir: str
     checksum: str
+    owner_session: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 class Document(BaseModel):
@@ -43,6 +44,7 @@ class Document(BaseModel):
     total_chapters: Optional[int] = None
     extraction_progress: float = 0.0
     file_path: str
+    owner_session: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class Chapter(BaseModel):

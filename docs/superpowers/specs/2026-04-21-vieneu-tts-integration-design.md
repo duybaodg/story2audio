@@ -1,7 +1,7 @@
 # VieNeu-TTS Integration Design
 
 ## Context
-Story2Audio currently uses Edge TTS and gTTS for text-to-speech. This design adds VieNeu-TTS as a new engine option, providing superior Vietnamese pronunciation, voice cloning, and code-switching capabilities.
+Ebook2Audio currently uses Edge TTS and gTTS for text-to-speech. This design adds VieNeu-TTS as a new engine option, providing superior Vietnamese pronunciation, voice cloning, and code-switching capabilities.
 
 ## Recommended Approach: Direct Local Integration
 

@@ -13,4 +13,25 @@ wheels/
 .env
 
 # Audio cache
-audio_cache/
+/audio_cache/
+
+# Runtime data
+/documents/
+/jobs/
+/obs/
+
+# OS metadata
+.DS_Store
+# docs
+.claude
+.codegraph
+.playwright-mcp
+.pytest_cache
+/docs
+/models
+.coverage
+AGENTS.md
+CLAUDE.md
+IMPLEMENTATION_SUMMARY.md
+PROJECT_REVIEW_FINDINGS.md
+
