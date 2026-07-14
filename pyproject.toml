@@ -1,6 +1,6 @@
 [project]
-name = "story2audio"
-version = "3.0.0"
+name = "ebook2audio"
+version = "4.0.0"
 description = "Ứng dụng FastAPI chuyển văn bản thành audio MP3 với streaming, cache và phụ đề trực tiếp (Live Subtitles)"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -10,6 +10,22 @@ dependencies = [
   "gtts>=2.5.4",
   "python-dotenv>=1.1.0",
   "uvicorn[standard]>=0.34.0",
+  # NEW DEPENDENCIES for document upload
+  "PyPDF2>=3.0.1",
+  "pdfplumber>=0.11.0",
+  "ebooklib>=0.18",
+  "python-magic>=0.4.27",  # For future file type validation (MVP: not yet used)
+  "python-multipart>=0.0.26",
+  # VieNeu-TTS for Vietnamese text-to-speech
+  "vieneu>=3.0.0",
+  # Audio quality enhancements
+  "pydub>=0.25.1",
+  # OCR retry for failed extractions
+  "pytesseract>=0.3.10",
+  "pdf2image>=1.16.0",
+  "Pillow>=9.0.0",
+  # Redis for rate limiting
+  "redis>=5.0.0"
 ]
 
 [dependency-groups]

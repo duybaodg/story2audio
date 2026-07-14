@@ -1,6 +1,6 @@
 # Hướng dẫn Đóng góp (Contributing Guidelines)
 
-Cảm ơn bạn đã quan tâm và muốn đóng góp cho dự án **Story2Audio**! Chúng tôi hoan nghênh mọi đóng góp từ cộng đồng, từ việc báo lỗi (bug report), đề xuất tính năng mới (feature request) cho đến việc gửi Pull Request (PR) để cải thiện mã nguồn.
+Cảm ơn bạn đã quan tâm và muốn đóng góp cho dự án **Ebook2Audio**! Chúng tôi hoan nghênh mọi đóng góp từ cộng đồng, từ việc báo lỗi (bug report), đề xuất tính năng mới (feature request) cho đến việc gửi Pull Request (PR) để cải thiện mã nguồn.
 
 Dưới đây là một số hướng dẫn để quá trình đóng góp diễn ra suôn sẻ và hiệu quả.
 
@@ -8,7 +8,7 @@ Dưới đây là một số hướng dẫn để quá trình đóng góp diễn
 
 ## 🐞 Báo cáo Lỗi (Reporting Bugs)
 
-Nếu bạn phát hiện lỗi trong quá trình sử dụng, vui lòng kiểm tra mục [Issues](https://github.com/dvchd/story2audio/issues) xem lỗi này đã được báo cáo chưa. Nếu chưa, hãy tạo một Issue mới với các thông tin sau:
+Nếu bạn phát hiện lỗi trong quá trình sử dụng, vui lòng kiểm tra mục [Issues](https://github.com/dvchd/ebook2audio/issues) xem lỗi này đã được báo cáo chưa. Nếu chưa, hãy tạo một Issue mới với các thông tin sau:
 
 1. **Mô tả lỗi:** Lỗi gì đang xảy ra? (càng chi tiết càng tốt).
 2. **Cách tái hiện (Steps to reproduce):** Các bước cụ thể để chúng tôi có thể gặp lỗi giống như bạn.
@@ -18,7 +18,7 @@ Nếu bạn phát hiện lỗi trong quá trình sử dụng, vui lòng kiểm t
 
 ## 💡 Đề xuất Tính năng (Suggesting Enhancements)
 
-Chúng tôi luôn muốn làm cho Story2Audio tốt hơn. Để đề xuất tính năng mới, hãy tạo một Issue và mô tả:
+Chúng tôi luôn muốn làm cho Ebook2Audio tốt hơn. Để đề xuất tính năng mới, hãy tạo một Issue và mô tả:
 
 1. **Vấn đề bạn đang gặp phải:** Tại sao tính năng này lại cần thiết?
 2. **Giải pháp đề xuất:** Bạn muốn tính năng hoạt động như thế nào?
@@ -31,8 +31,8 @@ Chúng tôi luôn muốn làm cho Story2Audio tốt hơn. Để đề xuất tí
 1. **Fork repository** này về tài khoản GitHub của bạn.
 2. **Clone fork** của bạn về máy:
    ```bash
-   git clone https://github.com/YOUR-USERNAME/story2audio.git
-   cd story2audio
+   git clone https://github.com/YOUR-USERNAME/ebook2audio.git
+   cd ebook2audio
    ```
 3. **Cài đặt dependencies** (khuyến nghị dùng `uv`):
    ```bash
@@ -67,4 +67,4 @@ Chúng tôi luôn muốn làm cho Story2Audio tốt hơn. Để đề xuất tí
 
 ---
 
-Cảm ơn bạn đã dành thời gian và công sức để cải thiện Story2Audio! 🚀
+Cảm ơn bạn đã dành thời gian và công sức để cải thiện Ebook2Audio! 🚀

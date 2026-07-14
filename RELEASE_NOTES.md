@@ -1,10 +1,41 @@
-# 🌟 Lịch sử Phát triển (Release Notes) - Story2Audio
+# 🌟 Lịch sử Phát triển (Release Notes) - Ebook2Audio
 
 Dưới đây là tài liệu tổng hợp lại toàn bộ các tính năng, cải tiến và bản vá lỗi từ lúc khởi tạo dự án cho tới nay.
 
 ---
 
-## [v3.0.0] - Bản cập nhật Phụ đề Trực tiếp & Redesign Giao diện (Mới nhất)
+## [v4.0.0] - Redis Worker, VieNeu Deployment Split & Azure Readiness (Mới nhất)
+
+Phiên bản v4.0.0 là bản breaking change tập trung vào khả năng triển khai production ổn định cho VieNeu-TTS. Kiến trúc chuyển từ chạy VieNeu trong tiến trình FastAPI sang mô hình Redis queue + worker riêng.
+
+### ✨ Tính năng mới (Features)
+
+- **Redis-backed VieNeu queue:**
+  - Thêm `tts_queue.py` để quản lý queue, processing list, cancellation flag và recovery cho VieNeu jobs.
+  - VieNeu jobs được enqueue từ `/tts/start` thay vì chạy trực tiếp trong FastAPI background task.
+
+- **VieNeu worker riêng:**
+  - Thêm `tts_worker.py` để warm up model và xử lý VieNeu jobs tuần tự.
+  - `docker-compose.yml` có service `vieneu-worker` riêng, dùng chung volume audio/model cache với service `app`.
+
+- **Tối ưu triển khai production:**
+  - FastAPI web process mặc định không load VieNeu model (`VIENEU_INIT_IN_WEB=false`).
+  - Redis dùng cho cả upload rate limiting và VieNeu queue.
+  - Thêm tài liệu Azure deployment, deploy runbook, Redis/VieNeu queue, và project structure.
+
+- **Cải thiện UI VieNeu:**
+  - Khi chọn VieNeu-TTS, UI tự động chuyển sang tiếng Việt và ẩn các nút chọn ngôn ngữ khác.
+
+### ⚠️ Breaking Changes
+
+- **Yêu cầu Redis cho VieNeu production:** VieNeu-TTS không còn được xử lý trực tiếp trong FastAPI web process theo cấu hình production khuyến nghị.
+- **Yêu cầu worker riêng:** Triển khai production cần chạy thêm `vieneu-worker` bên cạnh `app` và `redis`.
+- **Yêu cầu shared storage:** `app` và `vieneu-worker` phải dùng chung `/app/audio_cache`, `/app/documents`, `/app/jobs` và `/root/.cache/huggingface`.
+- **Thay đổi mô hình vận hành:** Scale web app và VieNeu worker tách biệt. Không nên tăng worker replica nếu chưa kiểm tra RAM/model footprint.
+
+---
+
+## [v3.0.0] - Bản cập nhật Phụ đề Trực tiếp & Redesign Giao diện
 
 Bản cập nhật lớn tiếp theo mang đến tính năng **Phụ đề trực tiếp (Live Subtitles)** cho Edge TTS, redesign toàn bộ giao diện người dùng và cải tiến sâu kiến trúc backend.
 
@@ -114,7 +145,7 @@ Tập trung nâng cao trải nghiệm tải tệp và tinh chỉnh hệ thống 
 
 ## [v1.0.0] - Phiên bản Khởi tạo (Initial Release)
 
-Phiên bản đầu tiên của Story2Audio với kiến trúc Core FastAPI và Live Streaming.
+Phiên bản đầu tiên của Ebook2Audio với kiến trúc Core FastAPI và Live Streaming.
 
 ### ✨ Tính năng cốt lõi (Core Features)
 - Xây dựng thành công hệ thống **Text-to-Speech (TTS) Web App** dùng **FastAPI**.

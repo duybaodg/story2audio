@@ -1,0 +1,84 @@
+{
+  "meta": {
+    "spec": "vieneu.voice.presets",
+    "spec_version": "3.0",
+    "engine": "VieNeu-TTS-v3-Turbo",
+    "author": "Phạm Nguyễn Ngọc Bảo (pnnbao-ump)",
+    "license": "Apache-2.0",
+    "homepage": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "notice": "VieNeu-TTS v3 Turbo built-in voices. Keep upstream attribution and license notice."
+  },
+  "default_voice": "Trúc Ly",
+  "presets": {
+    "Trúc Ly": {
+      "description": "Trúc Ly (nữ, trẻ trung)",
+      "gender": "female",
+      "style": "Youthful"
+    },
+    "Phạm Tuyên": {
+      "description": "Phạm Tuyên (nam, rõ ràng)",
+      "gender": "male",
+      "style": "Clear"
+    },
+    "Thái Sơn": {
+      "description": "Thái Sơn (nam, chắc giọng)",
+      "gender": "male",
+      "style": "Firm"
+    },
+    "Xuân Vĩnh": {
+      "description": "Xuân Vĩnh (nam, năng động)",
+      "gender": "male",
+      "style": "Upbeat"
+    },
+    "Thanh Bình": {
+      "description": "Thanh Bình (nam, điềm tĩnh)",
+      "gender": "male",
+      "style": "Calm"
+    },
+    "Minh Đức": {
+      "description": "Minh Đức (nam, trầm ấm)",
+      "gender": "male",
+      "style": "Warm"
+    },
+    "Ngọc Linh": {
+      "description": "Ngọc Linh (nữ, sáng)",
+      "gender": "female",
+      "style": "Bright"
+    },
+    "Đoan Trang": {
+      "description": "Đoan Trang (nữ, rõ ràng)",
+      "gender": "female",
+      "style": "Clear"
+    },
+    "Mai Anh": {
+      "description": "Mai Anh (nữ, mềm mại)",
+      "gender": "female",
+      "style": "Soft"
+    },
+    "Thục Đoan": {
+      "description": "Thục Đoan (nữ, mượt mà)",
+      "gender": "female",
+      "style": "Smooth"
+    },
+    "Minh Triết": {
+      "description": "Minh Triết (nam, miền Nam, tin tức)",
+      "gender": "male",
+      "style": "News"
+    },
+    "Thùy Dung": {
+      "description": "Thùy Dung (nữ, miền Nam, tin tức)",
+      "gender": "female",
+      "style": "News"
+    },
+    "Quang Sơn": {
+      "description": "Quang Sơn (nam, miền Trung, tự nhiên)",
+      "gender": "male",
+      "style": "Natural"
+    },
+    "Ngọc Trân": {
+      "description": "Ngọc Trân (nữ, miền Trung, tự nhiên)",
+      "gender": "female",
+      "style": "Natural"
+    }
+  }
+}

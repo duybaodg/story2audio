@@ -5,943 +5,246 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Story to Audio + Live Subtitle</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
-    <style>
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 980px;
-            margin: 24px auto;
-            padding: 0 18px 40px;
-            background: #f3f7fb;
-            color: #243447;
-        }
-        h1 {
-            text-align: center;
-            margin-bottom: 8px;
-            color: #1e293b;
-        }
-        .version {
-            text-align: center;
-            color: #64748b;
-            font-size: 13px;
-            margin-bottom: 22px;
-        }
-        .card {
-            background: #fff;
-            border-radius: 16px;
-            box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
-            padding: 18px;
-            margin-bottom: 18px;
-        }
-        textarea {
-            width: 100%;
-            min-height: 220px;
-            resize: vertical;
-            border-radius: 12px;
-            border: 1px solid #cbd5e1;
-            padding: 14px;
-            font-size: 15px;
-            line-height: 1.65;
-            background: #fff;
-        }
-        textarea:focus,
-        select:focus,
-        button:focus {
-            outline: none;
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
-        }
-        .controls {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 12px;
-            align-items: end;
-            margin-top: 16px;
-        }
-        .ctrl-group {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-        .ctrl-group label {
-            font-size: 12px;
-            color: #475569;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-        select, button {
-            border-radius: 10px;
-            border: 1px solid #cbd5e1;
-            padding: 10px 12px;
-            font-size: 14px;
-            background: #fff;
-        }
-        button.primary {
-            background: linear-gradient(135deg, #2563eb, #1d4ed8);
-            color: #fff;
-            font-weight: 700;
-            border: none;
-            cursor: pointer;
-        }
-        button.primary:hover { filter: brightness(1.03); }
-        button.primary:disabled {
-            cursor: not-allowed;
-            opacity: 0.7;
-        }
-        .lang-switcher {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            justify-content: center;
-            margin-bottom: 14px;
-        }
-        .lang-btn {
-            border-radius: 999px;
-            padding: 6px 12px;
-            border: 1px solid #cbd5e1;
-            background: #fff;
-            font-weight: 600;
-            cursor: pointer;
-            color: #334155;
-        }
-        .lang-btn.active {
-            background: #2563eb;
-            color: #fff;
-            border-color: #2563eb;
-        }
-        .status-wrap {
-            display: none;
-        }
-        .status-line {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 10px;
-            flex-wrap: wrap;
-        }
-        .status-text {
-            font-weight: 700;
-            color: #1e293b;
-        }
-        .progress-bar {
-            width: 100%;
-            background: #e2e8f0;
-            height: 12px;
-            border-radius: 999px;
-            overflow: hidden;
-        }
-        .progress-fill {
-            width: 0%;
-            height: 100%;
-            background: linear-gradient(90deg, #22c55e, #16a34a);
-            transition: width 0.35s ease;
-        }
-        .muted {
-            color: #64748b;
-            font-size: 13px;
-        }
-        .player-wrap {
-            display: none;
-        }
-        .player-title {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin: 0 0 12px;
-            color: #1e293b;
-        }
-        .badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: 700;
-        }
-        .badge.live { background: #fee2e2; color: #b91c1c; }
-        .badge.done { background: #dcfce7; color: #166534; }
-        .badge.cached { background: #dbeafe; color: #1d4ed8; }
-        .badge.wait { background: #fef3c7; color: #a16207; }
-        .badge.error { background: #ffe4e6; color: #be123c; }
-        audio {
-            width: 100%;
-            margin-bottom: 14px;
-        }
-        .subtitle-panel {
-            min-height: 94px;
-            border-radius: 14px;
-            background: linear-gradient(180deg, #0f172a, #1e293b);
-            color: #f8fafc;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            padding: 18px;
-            font-size: 24px;
-            font-weight: 700;
-            line-height: 1.5;
-            letter-spacing: 0.01em;
-            margin-bottom: 12px;
-            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
-        }
-        .subtitle-panel.empty {
-            color: #94a3b8;
-            font-size: 16px;
-            font-weight: 600;
-        }
-        .downloads {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 12px;
-        }
-        .download-btn {
-            display: none;
-            text-decoration: none;
-            border-radius: 10px;
-            padding: 10px 14px;
-            font-weight: 700;
-            color: #fff;
-            background: linear-gradient(135deg, #16a34a, #15803d);
-        }
-        .download-btn.alt {
-            background: linear-gradient(135deg, #0f766e, #0f766e);
-        }
-        .download-btn.gray {
-            background: linear-gradient(135deg, #334155, #1e293b);
-        }
-        .tip {
-            margin-top: 10px;
-            color: #475569;
-            font-size: 13px;
-            line-height: 1.5;
-        }
-        .footer-note {
-            text-align: center;
-            color: #64748b;
-            font-size: 12px;
-            margin-top: 14px;
-        }
-    </style>
+    <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-    <h1>Story to Audio + Live Subtitle</h1>
-    <div class="version">Phiên bản __APP_VERSION__</div>
+    <div class="app-shell">
+        <header class="app-topbar">
+            <div>
+                <h1>Ebook2Audio</h1>
+                <div class="version">Phiên bản __APP_VERSION__</div>
+            </div>
+            <div class="topbar-status">
+                <span class="status-dot"></span>
+                <span>Sẵn sàng chuyển đổi</span>
+            </div>
+        </header>
 
-    <div class="card">
-        <div class="lang-switcher" id="langSwitcher">
-            <button class="lang-btn active" data-lang="vi">🇻🇳 Tiếng Việt</button>
-            <button class="lang-btn" data-lang="en">🇺🇸 English</button>
-            <button class="lang-btn" data-lang="ja">🇯🇵 日本語</button>
-            <button class="lang-btn" data-lang="zh">🇨🇳 中文</button>
-            <button class="lang-btn" data-lang="ko">🇰🇷 한국어</button>
-            <button class="lang-btn" data-lang="fr">🇫🇷 Français</button>
-            <button class="lang-btn" data-lang="de">🇩🇪 Deutsch</button>
-        </div>
+        <main class="workspace">
+            <section class="workspace-main">
+                <div class="tab-nav">
+                    <button class="tab-btn active" data-tab="paste-text">
+                        <span class="tab-icon" aria-hidden="true">T</span>
+                        <span class="tab-label">Văn bản</span>
+                    </button>
+                    <button class="tab-btn" data-tab="upload-document">
+                        <span class="tab-icon" aria-hidden="true">D</span>
+                        <span class="tab-label">Tài liệu</span>
+                    </button>
+                    <button class="tab-btn" data-tab="queue">
+                        <span class="tab-icon" aria-hidden="true">Q</span>
+                        <span class="tab-label">Hàng đợi</span>
+                    </button>
+                </div>
 
-        <textarea id="textInput" placeholder="Nhập nội dung muốn chuyển thành audio..."></textarea>
+                <div class="card workspace-card" id="paste-text-tab">
+                    <div class="panel-heading">
+                        <div>
+                            <h2>Nội dung chuyển đổi</h2>
+                            <p>Dán truyện, bài viết hoặc đoạn văn cần tạo audio.</p>
+                        </div>
+                    </div>
 
-        <div class="controls">
-            <div class="ctrl-group">
-                <label for="engine">Engine</label>
-                <select id="engine">
-                    <option value="edge">Edge-TTS (có subtitle live)</option>
-                    <option value="gtts">Google TTS (không subtitle)</option>
-                </select>
+                    <div class="lang-switcher" id="langSwitcher">
+                        <button class="lang-btn active" data-lang="vi">Tiếng Việt</button>
+                        <button class="lang-btn" data-lang="en">English</button>
+                        <button class="lang-btn" data-lang="ja">日本語</button>
+                        <button class="lang-btn" data-lang="zh">中文</button>
+                        <button class="lang-btn" data-lang="ko">한국어</button>
+                        <button class="lang-btn" data-lang="fr">Français</button>
+                        <button class="lang-btn" data-lang="de">Deutsch</button>
+                    </div>
+
+                    <textarea id="textInput" placeholder="Nhập nội dung muốn chuyển thành audio..."></textarea>
+                </div>
+
+                <div class="card workspace-card hidden" id="upload-document-tab">
+                    <div class="panel-heading">
+                        <div>
+                            <h2>Tài liệu</h2>
+                            <p>Tải PDF hoặc EPUB, chọn chương rồi chuyển sang audio.</p>
+                        </div>
+                    </div>
+
+                    <div id="uploadZone" class="upload-zone">
+                        <div class="upload-icon" aria-hidden="true">+</div>
+                        <div class="upload-text">Kéo thả PDF hoặc EPUB vào đây</div>
+                        <div class="upload-subtext">hoặc nhấn để chọn file</div>
+                        <button class="browse-btn" type="button">Chọn File</button>
+                        <div class="upload-limit">Kích thước tối đa: 50 MB</div>
+                        <input type="file" id="fileInput" accept=".pdf,.epub,application/pdf,application/epub+zip" class="hidden">
+                    </div>
+
+                    <div id="uploadProgress" class="upload-progress hidden">
+                        <div class="progress-info">
+                            <span class="progress-filename" id="progressFilename"></span>
+                            <span class="progress-status" id="progressStatus">Đang tải lên...</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="uploadProgressFill"></div>
+                        </div>
+                        <div class="progress-details" id="progressDetails">Chunk 0/0 · 0 MB / 0 MB</div>
+                    </div>
+
+                    <div id="extractionProgress" class="extraction-progress hidden">
+                        <div class="extraction-info">
+                            <span class="extraction-icon" aria-hidden="true">...</span>
+                            <span class="extraction-text" id="extractionText">Đang trích xuất chương...</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="extractionProgressFill"></div>
+                        </div>
+                        <div class="extraction-details" id="extractionDetails"></div>
+                    </div>
+
+                    <div id="chapterContainer" class="hidden">
+                        <div class="chapter-header">
+                            <span id="documentTitle" class="document-title"></span>
+                        </div>
+                        <div id="chapterTree" class="chapter-tree"></div>
+                        <div class="chapter-actions">
+                            <button class="chapter-action-btn" id="selectAllBtn">Chọn tất cả</button>
+                            <button class="chapter-action-btn" id="clearSelectionBtn">Bỏ chọn</button>
+                        </div>
+                        <div class="selection-summary" id="selectionSummary">
+                            <span class="summary-text" id="summaryText">0 chương đã chọn · 0 từ · ~0 phút</span>
+                        </div>
+                        <button class="preview-btn" id="previewBtn" disabled>Xem trước đã chọn → Chuyển đổi</button>
+                    </div>
+                </div>
+
+                <div class="card workspace-card hidden" id="queue-tab">
+                    <div class="panel-heading">
+                        <div>
+                            <h2>Hàng đợi tài liệu</h2>
+                            <p>Tài liệu đã tải lên và trạng thái trích xuất.</p>
+                        </div>
+                    </div>
+
+                    <div id="queueList" class="queue-list">
+                        <!-- Queue items rendered here -->
+                    </div>
+                </div>
+            </section>
+
+            <aside class="settings-panel">
+                <div class="settings-card">
+                    <div class="settings-heading">
+                        <h2>Thiết lập audio</h2>
+                        <p>Chọn engine, giọng đọc và định dạng đầu ra.</p>
+                    </div>
+
+                    <div class="controls">
+                        <div class="ctrl-group">
+                            <label for="engine">Engine</label>
+                            <select id="engine" name="engine">
+                                <option value="edge">Edge-TTS · subtitle live</option>
+                                <option value="vieneu">VieNeu-TTS · chất lượng cao</option>
+                                <option value="gtts">Google TTS · đơn giản</option>
+                            </select>
+                        </div>
+
+                        <div class="ctrl-group" id="voiceGroup">
+                            <label for="voice">Voice</label>
+                            <select id="voice" name="voice"></select>
+                            <small id="engineIndicator"></small>
+                        </div>
+
+                        <div class="ctrl-group" id="modelGroup" style="display: none;">
+                            <label for="model">Model</label>
+                            <select id="model" name="model">
+                                <option value="v3_turbo">VieNeu Turbo v3</option>
+                                <option value="v3_turbo_int8">VieNeu Turbo v3 (INT8)</option>
+                            </select>
+                            <small>INT8 dùng ít bộ nhớ hơn và chạy nhanh hơn trên CPU.</small>
+                        </div>
+
+                        <div class="ctrl-group" id="audioQualityGroup">
+                            <label for="audioQuality">Chất lượng âm thanh</label>
+                            <select id="audioQuality">
+                                <option value="standard" selected>Tiêu chuẩn · 128k MP3</option>
+                                <option value="high">Cao · 192k MP3</option>
+                                <option value="lossless">Lossless · WAV</option>
+                            </select>
+                            <small>Chỉ dùng với VieNeu-TTS</small>
+                        </div>
+
+                        <div class="ctrl-group">
+                            <label for="speedSelect">Tốc độ phát</label>
+                            <select id="speedSelect">
+                                <option value="0.75">0.75x</option>
+                                <option value="1" selected>1x</option>
+                                <option value="1.25">1.25x</option>
+                                <option value="1.5">1.5x</option>
+                                <option value="2">2x</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="engine-notes">
+                        <div><b>Edge</b><span>Live audio và subtitle.</span></div>
+                        <div><b>VieNeu</b><span>Giọng Việt tự nhiên, không subtitle.</span></div>
+                        <div><b>Google</b><span>Fallback nhanh, không subtitle.</span></div>
+                    </div>
+
+                    <div class="action-stack">
+                        <button id="convertBtn" class="primary">Chuyển thành audio</button>
+                        <div class="generation-actions" id="generationActions" style="display: none;">
+                            <button id="btnStop" class="btn-stop" title="Dừng tạo và lưu audio một phần">Dừng</button>
+                            <button id="btnDelete" class="btn-delete" title="Xóa audio">Xóa audio</button>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+
+        <section class="audio-dock">
+            <div class="card status-wrap" id="statusWrap">
+                <div class="status-line">
+                    <div class="status-text" id="statusLabel">Đang chờ...</div>
+                    <div class="muted" id="progText">0 / 0 đoạn</div>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" id="progFill"></div></div>
+                <div class="tip" id="fileSizeInfo"></div>
             </div>
 
-            <div class="ctrl-group" id="voiceGroup">
-                <label for="voice">Voice</label>
-                <select id="voice"></select>
+            <div class="card player-wrap" id="playerWrap">
+                <h3 class="player-title">
+                    <span>Trình phát audio</span>
+                    <span class="badge wait" id="modeBadge">Chờ</span>
+                </h3>
+
+                <audio id="audioPlayer" controls preload="metadata"></audio>
+
+                <div class="subtitle-panel empty" id="subtitlePanel">
+                    Subtitle live sẽ hiện ở đây khi dùng Edge-TTS.
+                </div>
+
+                <div class="downloads">
+                    <a id="downloadAudioBtn" class="download-btn" download="audio.mp3">Tải MP3</a>
+                    <a id="downloadSrtBtn" class="download-btn alt" download="subtitle.srt">Tải SRT</a>
+                    <a id="downloadVttBtn" class="download-btn gray" download="subtitle.vtt">Tải VTT</a>
+                    <button id="clearCacheBtn" class="clear-cache-btn">Xóa audio</button>
+                </div>
             </div>
+        </section>
+    </div>
 
-            <div class="ctrl-group">
-                <label for="speedSelect">Tốc độ phát</label>
-                <select id="speedSelect">
-                    <option value="0.75">0.75x</option>
-                    <option value="1" selected>1x</option>
-                    <option value="1.25">1.25x</option>
-                    <option value="1.5">1.5x</option>
-                    <option value="2">2x</option>
-                </select>
+    <!-- Modal Overlay -->
+    <div id="modalOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <span class="modal-icon" id="modalIcon"></span>
+                <span class="modal-title" id="modalTitle"></span>
             </div>
-
-            <div class="ctrl-group">
-                <button id="convertBtn" class="primary">▶ Chuyển thành audio</button>
-            </div>
-        </div>
-
-        <div class="tip">
-            • <b>Edge‑TTS</b>: phát audio live và có subtitle chạy theo thời gian.<br>
-            • <b>Google TTS</b>: phát audio live ngay khi có dữ liệu, nhưng <b>không hỗ trợ subtitle</b>.
-        </div>
-
-    </div>
-
-    <div class="card status-wrap" id="statusWrap">
-        <div class="status-line">
-            <div class="status-text" id="statusLabel">Đang chờ...</div>
-            <div class="muted" id="progText">0 / 0 đoạn</div>
-        </div>
-        <div class="progress-bar"><div class="progress-fill" id="progFill"></div></div>
-        <div class="tip" id="fileSizeInfo"></div>
-    </div>
-
-    <div class="card player-wrap" id="playerWrap">
-        <h3 class="player-title">
-            <span>Trình phát audio</span>
-            <span class="badge wait" id="modeBadge">… Chờ</span>
-        </h3>
-
-        <audio id="audioPlayer" controls preload="metadata"></audio>
-
-        <div class="subtitle-panel empty" id="subtitlePanel">
-            Subtitle live sẽ hiện ở đây khi dùng Edge-TTS.
-        </div>
-
-        <div class="downloads">
-            <a id="downloadAudioBtn" class="download-btn" download="audio.mp3">⬇ Tải MP3</a>
-            <a id="downloadSrtBtn" class="download-btn alt" download="subtitle.srt">⬇ Tải SRT</a>
-            <a id="downloadVttBtn" class="download-btn gray" download="subtitle.vtt">⬇ Tải VTT</a>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-actions" id="modalActions"></div>
         </div>
     </div>
 
-    <div class="footer-note">
-        Mẹo: với audio rất dài, hãy đợi subtitle live xuất hiện vài cue đầu tiên rồi mới nghe để cảm giác đồng bộ hơn.
-    </div>
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
 
-    <script>
-        const SAMPLE_TEXT = {
-            vi: 'Ngày xửa ngày xưa, trong một khu rừng xanh thẳm, có một chú thỏ nhỏ rất thông minh và tốt bụng. Mỗi buổi sáng, chú thường chạy quanh hồ nước để chào những người bạn của mình.',
-            en: 'Once upon a time, in a quiet green forest, there lived a small rabbit who was clever and kind. Every morning, the rabbit ran around the lake and greeted all of his friends.',
-            ja: '昔々、静かな緑の森に、とても賢くて優しい小さなうさぎが住んでいました。毎朝、うさぎは湖のまわりを走りながら、友だちみんなに挨拶をしていました。',
-            zh: '很久很久以前，在一片安静的绿色森林里，住着一只聪明又善良的小兔子。每天早晨，它都会绕着湖边奔跑，向所有朋友问好。',
-            ko: '옛날 옛적, 조용하고 푸른 숲 속에 아주 영리하고 착한 작은 토끼가 살고 있었습니다. 토끼는 매일 아침 호수 둘레를 달리며 친구들에게 인사를 했습니다.',
-            fr: 'Il était une fois, dans une forêt verte et paisible, un petit lapin très intelligent et très gentil. Chaque matin, il courait autour du lac pour saluer tous ses amis.',
-            de: 'Es war einmal in einem ruhigen grünen Wald ein kleiner Hase, der klug und freundlich war. Jeden Morgen lief er um den See und begrüßte alle seine Freunde.'
-        };
-
-        let currentLang = 'vi';
-        let voiceRegistry = {};
-        let pollingInterval = null;
-        let currentCacheId = null;
-        let currentMode = null; // mse | fallback | cached
-        let mediaSource = null;
-        let sourceBuffer = null;
-        let streamReader = null;
-        let bytesReceived = 0;
-        let streamFinished = false;
-        let lastStatus = null;
-
-        let subtitleSupported = false;
-        let subtitleEventSource = null;
-        let subtitleCues = [];
-        let subtitleStreamDone = false;
-        let subtitleRaf = null;
-        let subtitleCursor = 0;
-
-        const MSE_SUPPORTED = (
-            typeof MediaSource !== 'undefined' &&
-            MediaSource.isTypeSupported('audio/mpeg')
-        );
-
-        const textInput = document.getElementById('textInput');
-        const engineSel = document.getElementById('engine');
-        const voiceSel = document.getElementById('voice');
-        const voiceGroup = document.getElementById('voiceGroup');
-        const speedSelect = document.getElementById('speedSelect');
-        const convertBtn = document.getElementById('convertBtn');
-
-        const statusWrap = document.getElementById('statusWrap');
-        const statusLabel = document.getElementById('statusLabel');
-        const progFill = document.getElementById('progFill');
-        const progText = document.getElementById('progText');
-        const fileSizeInfo = document.getElementById('fileSizeInfo');
-
-        const playerWrap = document.getElementById('playerWrap');
-        const player = document.getElementById('audioPlayer');
-        const subtitlePanel = document.getElementById('subtitlePanel');
-        const modeBadge = document.getElementById('modeBadge');
-
-        const downloadAudioBtn = document.getElementById('downloadAudioBtn');
-        const downloadSrtBtn = document.getElementById('downloadSrtBtn');
-        const downloadVttBtn = document.getElementById('downloadVttBtn');
-
-        function setSampleText(lang) {
-            textInput.value = SAMPLE_TEXT[lang] || '';
-        }
-
-        function formatBytes(bytes) {
-            if (!bytes || bytes < 0) return '0 KB';
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-            return (bytes / 1024 / 1024).toFixed(2) + ' MB';
-        }
-
-        function getRate() {
-            return parseFloat(speedSelect.value || '1');
-        }
-
-        function applyPlaybackRate() {
-            player.playbackRate = getRate();
-        }
-
-        async function loadVoiceRegistry() {
-            const res = await fetch('/tts/voices', { cache: 'no-store' });
-            if (!res.ok) throw new Error('Không tải được danh sách voice');
-            const data = await res.json();
-            voiceRegistry = data.voices || {};
-        }
-
-        function updateLanguageButtons() {
-            document.querySelectorAll('.lang-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.dataset.lang === currentLang);
-            });
-        }
-
-        function updateVoiceDropdown() {
-            const voices = voiceRegistry[currentLang] || [];
-            voiceSel.innerHTML = '';
-
-            voices.forEach(v => {
-                const opt = document.createElement('option');
-                opt.value = v.value;
-                opt.textContent = v.label;
-                voiceSel.appendChild(opt);
-            });
-
-            updateVoiceVisibility();
-        }
-
-        function updateVoiceVisibility() {
-            voiceGroup.style.display = engineSel.value === 'gtts' ? 'none' : '';
-        }
-
-        function setStatus(text) {
-            statusLabel.textContent = text;
-        }
-
-        function updateProgress(current, total) {
-            const pct = total > 0 ? (current / total) * 100 : 0;
-            progFill.style.width = pct + '%';
-            progText.textContent = `${current || 0} / ${total || 0} đoạn`;
-        }
-
-        function setBadge(type) {
-            modeBadge.className = 'badge ' + type;
-            modeBadge.textContent = {
-                live: '● LIVE',
-                done: '✓ Xong',
-                cached: '★ Cache',
-                wait: '… Chờ',
-                error: '⚠ Lỗi',
-            }[type] || type;
-        }
-
-        function renderFileSize() {
-            const finalSize = (lastStatus && lastStatus.file_size) ? lastStatus.file_size : 0;
-
-            if (lastStatus && lastStatus.status === 'completed' && finalSize > 0) {
-                fileSizeInfo.textContent = 'Kích thước file: ' + formatBytes(finalSize);
-                return;
-            }
-
-            if (bytesReceived > 0 && finalSize > 0 && bytesReceived < finalSize) {
-                fileSizeInfo.textContent = 'Đã nhận: ' + formatBytes(bytesReceived) + ' / ' + formatBytes(finalSize);
-                return;
-            }
-
-            if (bytesReceived > 0) {
-                fileSizeInfo.textContent = 'Đã nhận: ' + formatBytes(bytesReceived);
-                return;
-            }
-
-            fileSizeInfo.textContent = '';
-        }
-
-        function cleanupMSE() {
-            if (streamReader) {
-                try { streamReader.cancel(); } catch (_) {}
-                streamReader = null;
-            }
-            if (mediaSource && mediaSource.readyState === 'open') {
-                try { mediaSource.endOfStream(); } catch (_) {}
-            }
-            if (player.src && player.src.startsWith('blob:')) {
-                try { URL.revokeObjectURL(player.src); } catch (_) {}
-            }
-            mediaSource = null;
-            sourceBuffer = null;
-        }
-
-        function cleanupSubtitleStream() {
-            if (subtitleEventSource) {
-                try { subtitleEventSource.close(); } catch (_) {}
-                subtitleEventSource = null;
-            }
-            subtitleStreamDone = false;
-            subtitleCues = [];
-            subtitleCursor = 0;
-
-            if (subtitleRaf) {
-                cancelAnimationFrame(subtitleRaf);
-                subtitleRaf = null;
-            }
-
-            subtitlePanel.classList.add('empty');
-            subtitlePanel.textContent = 'Subtitle live sẽ hiện ở đây khi dùng Edge-TTS.';
-            subtitlePanel.style.display = 'none';
-        }
-
-        function resetUI() {
-            cleanupMSE();
-            cleanupSubtitleStream();
-
-            if (pollingInterval) {
-                clearInterval(pollingInterval);
-                pollingInterval = null;
-            }
-
-            currentCacheId = null;
-            currentMode = null;
-            bytesReceived = 0;
-            streamFinished = false;
-            lastStatus = null;
-            subtitleSupported = false;
-
-            player.pause();
-            player.removeAttribute('src');
-            player.load();
-
-            statusWrap.style.display = 'block';
-            playerWrap.style.display = 'none';
-            updateProgress(0, 0);
-            setStatus('Đang gửi yêu cầu...');
-            renderFileSize();
-            setBadge('wait');
-
-            downloadAudioBtn.style.display = 'none';
-            downloadSrtBtn.style.display = 'none';
-            downloadVttBtn.style.display = 'none';
-
-            downloadAudioBtn.href = '';
-            downloadSrtBtn.href = '';
-            downloadVttBtn.href = '';
-        }
-
-        function waitSourceBufferIdle(sb) {
-            if (!sb || !sb.updating) return Promise.resolve();
-            return new Promise(resolve => {
-                sb.addEventListener('updateend', resolve, { once: true });
-            });
-        }
-
-        async function appendChunkToSourceBuffer(sb, chunk) {
-            await waitSourceBufferIdle(sb);
-            return new Promise((resolve, reject) => {
-                const onUpdateEnd = () => { cleanup(); resolve(); };
-                const onError = (e) => { cleanup(); reject(e); };
-                const cleanup = () => {
-                    sb.removeEventListener('updateend', onUpdateEnd);
-                    sb.removeEventListener('error', onError);
-                };
-                sb.addEventListener('updateend', onUpdateEnd, { once: true });
-                sb.addEventListener('error', onError, { once: true });
-                try {
-                    sb.appendBuffer(chunk);
-                } catch (e) {
-                    cleanup();
-                    reject(e);
-                }
-            });
-        }
-
-        function showDownloadButtons(cacheId, showSubtitle) {
-            downloadAudioBtn.href = '/tts/file/' + cacheId;
-            downloadAudioBtn.download = 'audio_' + cacheId.slice(0, 8) + '.mp3';
-            downloadAudioBtn.style.display = 'inline-flex';
-
-            if (showSubtitle) {
-                downloadSrtBtn.href = '/tts/subtitle/srt/' + cacheId;
-                downloadVttBtn.href = '/tts/subtitle/vtt/' + cacheId;
-                downloadSrtBtn.download = 'subtitle_' + cacheId.slice(0, 8) + '.srt';
-                downloadVttBtn.download = 'subtitle_' + cacheId.slice(0, 8) + '.vtt';
-                downloadSrtBtn.style.display = 'inline-flex';
-                downloadVttBtn.style.display = 'inline-flex';
-            }
-        }
-
-        function startSubtitleSyncLoop() {
-            if (!subtitleSupported) return;
-            subtitlePanel.style.display = 'flex';
-
-            const step = () => {
-                if (!subtitleSupported) return;
-
-                const t = player.currentTime || 0;
-
-                while (
-                    subtitleCursor > 0 &&
-                    subtitleCues[subtitleCursor - 1] &&
-                    t < subtitleCues[subtitleCursor - 1].start
-                ) {
-                    subtitleCursor -= 1;
-                }
-
-                while (
-                    subtitleCues[subtitleCursor] &&
-                    t > subtitleCues[subtitleCursor].end
-                ) {
-                    subtitleCursor += 1;
-                }
-
-                const cue = subtitleCues[subtitleCursor];
-
-                if (cue && t >= cue.start && t <= cue.end) {
-                    subtitlePanel.classList.remove('empty');
-                    subtitlePanel.textContent = cue.text;
-                } else {
-                    subtitlePanel.classList.add('empty');
-                    if (subtitleStreamDone || subtitleCues.length > 0) {
-                        subtitlePanel.textContent = '...';
-                    } else {
-                        subtitlePanel.textContent = 'Đang chờ subtitle live từ Edge-TTS...';
-                    }
-                }
-
-                subtitleRaf = requestAnimationFrame(step);
-            };
-
-            if (subtitleRaf) cancelAnimationFrame(subtitleRaf);
-            subtitleRaf = requestAnimationFrame(step);
-        }
-
-        function startSubtitleEventStream(cacheId) {
-            cleanupSubtitleStream();
-
-            subtitleSupported = true;
-            subtitlePanel.style.display = 'flex';
-            subtitlePanel.classList.add('empty');
-            subtitlePanel.textContent = 'Đang chờ subtitle live từ Edge-TTS...';
-
-            subtitleEventSource = new EventSource('/tts/cues/stream/' + cacheId);
-
-            subtitleEventSource.addEventListener('cue', (ev) => {
-                try {
-                    const cue = JSON.parse(ev.data);
-                    subtitleCues.push(cue);
-                    subtitleCues.sort((a, b) => a.start - b.start);
-                } catch (err) {
-                    console.error('Subtitle cue parse error:', err);
-                }
-            });
-
-            subtitleEventSource.addEventListener('complete', () => {
-                subtitleStreamDone = true;
-                if (subtitleEventSource) {
-                    subtitleEventSource.close();
-                    subtitleEventSource = null;
-                }
-            });
-
-            subtitleEventSource.addEventListener('error', (ev) => {
-                console.warn('Subtitle SSE error', ev);
-            });
-
-            startSubtitleSyncLoop();
-        }
-
-        async function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-
-        async function playDirect(cacheId) {
-            playerWrap.style.display = 'block';
-            const url = '/tts/file/' + cacheId + '?t=' + Date.now();
-            player.src = url;
-
-            player.addEventListener('canplay', function onCanPlay() {
-                player.removeEventListener('canplay', onCanPlay);
-                applyPlaybackRate();
-                player.play().catch(() => {});
-            }, { once: true });
-        }
-
-        async function startMSEPlayback(cacheId) {
-            playerWrap.style.display = 'block';
-            bytesReceived = 0;
-            streamFinished = false;
-
-            mediaSource = new MediaSource();
-            player.src = URL.createObjectURL(mediaSource);
-
-            mediaSource.addEventListener('sourceopen', async () => {
-                try {
-                    if (!mediaSource || mediaSource.readyState !== 'open') return;
-                    sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
-                    sourceBuffer.mode = 'sequence';
-                    await pumpLiveStream(cacheId);
-                } catch (e) {
-                    console.error('[MSE] sourceopen error:', e);
-                    setStatus('Không stream live được. Chuyển sang chế độ chờ hoàn tất...');
-                    setBadge('wait');
-                    cleanupMSE();
-                    currentMode = 'fallback';
-                    startPolling(cacheId, { allowDirectPlayWhenCompleted: true });
-                }
-            }, { once: true });
-        }
-
-        async function pumpLiveStream(cacheId) {
-            let response = null;
-
-            for (let attempt = 0; attempt < 40; attempt++) {
-                try {
-                    const res = await fetch('/tts/stream/' + cacheId, { cache: 'no-store' });
-                    if (res.ok) {
-                        response = res;
-                        break;
-                    }
-
-                    if (res.status === 503) {
-                        const err = await res.json().catch(() => ({}));
-                        throw new Error(err.detail || 'Generation failed');
-                    }
-                } catch (e) {
-                    if (attempt === 39) throw e;
-                }
-
-                await sleep(300);
-            }
-
-            if (!response || !response.body) {
-                throw new Error('Không mở được luồng audio live');
-            }
-
-            streamReader = response.body.getReader();
-            let firstChunk = true;
-
-            while (true) {
-                const { done, value } = await streamReader.read();
-                if (done) break;
-                if (!value || value.byteLength === 0) continue;
-
-                bytesReceived += value.byteLength;
-                renderFileSize();
-
-                if (!sourceBuffer || !mediaSource || mediaSource.readyState !== 'open') break;
-                await appendChunkToSourceBuffer(sourceBuffer, value);
-
-                if (firstChunk) {
-                    firstChunk = false;
-                    playerWrap.style.display = 'block';
-                    applyPlaybackRate();
-                    player.play().catch(() => {});
-                }
-            }
-
-            streamFinished = true;
-
-            if (sourceBuffer) await waitSourceBufferIdle(sourceBuffer);
-            if (mediaSource && mediaSource.readyState === 'open') {
-                try { mediaSource.endOfStream(); } catch (_) {}
-            }
-
-            if (lastStatus && lastStatus.status === 'completed') {
-                setBadge('done');
-                showDownloadButtons(cacheId, subtitleSupported);
-            }
-
-            convertBtn.disabled = false;
-        }
-
-        function startPolling(cacheId, options = {}) {
-            const { allowDirectPlayWhenCompleted = false } = options;
-
-            if (pollingInterval) clearInterval(pollingInterval);
-
-            pollingInterval = setInterval(async () => {
-                try {
-                    const res = await fetch('/tts/status/' + cacheId, { cache: 'no-store' });
-                    if (!res.ok) throw new Error('Không lấy được trạng thái');
-
-                    const data = await res.json();
-                    lastStatus = data;
-
-                    updateProgress(data.progress || 0, data.total || 0);
-                    renderFileSize();
-
-                    if (data.status === 'queued') {
-                        setStatus('Đang xếp hàng xử lý...');
-                        return;
-                    }
-
-                    if (data.status === 'processing') {
-                        if (currentMode === 'mse' && subtitleSupported) {
-                            setStatus(`Đang tạo audio + subtitle live... (${data.progress || 0}/${data.total || 0})`);
-                            setBadge('live');
-                        } else {
-                            setStatus(`Đang tạo audio... (${data.progress || 0}/${data.total || 0})`);
-                            setBadge('wait');
-                        }
-                        return;
-                    }
-
-                    if (data.status === 'failed') {
-                        setStatus('Lỗi: ' + (data.error || 'unknown'));
-                        setBadge('error');
-
-                        clearInterval(pollingInterval);
-                        pollingInterval = null;
-                        convertBtn.disabled = false;
-                        return;
-                    }
-
-                    if (data.status === 'completed') {
-                        updateProgress(data.total || 1, data.total || 1);
-                        setStatus('Hoàn tất.');
-
-                        if (currentMode === 'mse') {
-                            if (streamFinished) {
-                                setBadge('done');
-                                showDownloadButtons(cacheId, subtitleSupported);
-
-                                clearInterval(pollingInterval);
-                                pollingInterval = null;
-                                convertBtn.disabled = false;
-                            } else {
-                                setBadge('live');
-                            }
-                        } else {
-                            setBadge(currentMode === 'cached' ? 'cached' : 'done');
-                            showDownloadButtons(cacheId, subtitleSupported);
-
-                            clearInterval(pollingInterval);
-                            pollingInterval = null;
-
-                            if (allowDirectPlayWhenCompleted) {
-                                playDirect(cacheId);
-                            }
-                            convertBtn.disabled = false;
-                        }
-                    }
-                } catch (e) {
-                    console.error('Polling error:', e);
-                }
-            }, 1000);
-        }
-
-        engineSel.addEventListener('change', updateVoiceVisibility);
-        speedSelect.addEventListener('change', applyPlaybackRate);
-        player.addEventListener('play', applyPlaybackRate);
-        player.addEventListener('canplay', applyPlaybackRate);
-
-        convertBtn.addEventListener('click', async () => {
-            const text = textInput.value.trim();
-            const engine = engineSel.value;
-            const voice = voiceSel.value;
-
-            if (!text) {
-                alert('Vui lòng nhập nội dung trước.');
-                return;
-            }
-
-            resetUI();
-            convertBtn.disabled = true;
-            subtitleSupported = engine === 'edge';
-
-            const body = { text, engine, language: currentLang };
-            if (engine === 'edge') body.voice = voice;
-
-            let data;
-            try {
-                const res = await fetch('/tts/start', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data.detail || 'Start TTS failed');
-                }
-            } catch (e) {
-                setStatus('Lỗi kết nối: ' + (e.message || e));
-                setBadge('error');
-                convertBtn.disabled = false;
-                return;
-            }
-
-            currentCacheId = data.cache_id;
-            subtitleSupported = !!data.subtitle_supported;
-            playerWrap.style.display = 'block';
-
-            if (engine === 'edge') {
-                startSubtitleEventStream(currentCacheId);
-            }
-
-            if (data.status === 'completed') {
-                currentMode = 'cached';
-                lastStatus = { status: 'completed', file_size: 0, total: 1, progress: 1 };
-                updateProgress(1, 1);
-                setStatus('Đã tìm thấy trong cache.');
-                setBadge('cached');
-
-                await playDirect(currentCacheId);
-                showDownloadButtons(currentCacheId, subtitleSupported);
-
-                convertBtn.disabled = false;
-                startPolling(currentCacheId, { allowDirectPlayWhenCompleted: false });
-                return;
-            }
-
-            if (MSE_SUPPORTED) {
-                currentMode = 'mse';
-
-                if (engine === 'edge') {
-                    setBadge('live');
-                    setStatus('Đang tạo audio + subtitle live...');
-                } else {
-                    setBadge('live');
-                    setStatus('Đang tạo audio live (Google TTS, không subtitle)...');
-                }
-
-                startPolling(currentCacheId, { allowDirectPlayWhenCompleted: false });
-                startMSEPlayback(currentCacheId);
-            } else {
-                currentMode = 'fallback';
-                setBadge('wait');
-                setStatus('Trình duyệt không hỗ trợ live stream MP3, sẽ phát khi xong file...');
-                startPolling(currentCacheId, { allowDirectPlayWhenCompleted: true });
-            }
-
-        });
-
-        document.querySelectorAll('.lang-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                currentLang = btn.dataset.lang;
-                updateLanguageButtons();
-                updateVoiceDropdown();
-                setSampleText(currentLang);
-            });
-        });
-
-        (async () => {
-            try {
-                await loadVoiceRegistry();
-                updateVoiceDropdown();
-                updateLanguageButtons();
-                setSampleText('vi');
-                updateVoiceVisibility();
-            } catch (err) {
-                console.error('[TTS] init failed:', err);
-                statusWrap.style.display = 'block';
-                setStatus('Khởi tạo thất bại. Vui lòng tải lại trang.');
-                setBadge('error');
-            }
-        })();
-    </script>
+    <script src="/static/app.js" defer></script>
 </body>
 </html>
