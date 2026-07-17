@@ -102,8 +102,8 @@ Truy cập [ebook2audio.hoctuthien.com](https://ebook2audio.hoctuthien.com), dá
 
 **Docker Compose (Khuyến nghị):**
 ```bash
-git clone https://github.com/dvchd/ebook2audio.git
-cd ebook2audio
+git clone https://github.com/duybaodg/story2audio.git
+cd story2audio
 docker compose up -d --build
 ```
 Truy cập `http://localhost:8000` để sử dụng.
@@ -125,6 +125,24 @@ TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS=300
 ```
 
 Với cấu hình này, chỉ nên chạy **1 VieNeu job tại một thời điểm**. Người dùng khác vẫn có thể mở web, xem trạng thái, tải audio cache, hoặc dùng Edge/gTTS nhẹ hơn.
+
+> **Lưu ý về VieNeu worker:** `VIENEU_MAX_WORKERS=2` hoặc `3` hiện không tăng số job chạy đồng thời vì model pool được giới hạn ở một instance. Không scale service `vieneu-worker` thành nhiều replica ở phiên bản hiện tại: mỗi replica tải một bản model riêng, tăng mạnh CPU/RAM, đồng thời cơ chế recovery và heartbeat dùng chung chưa an toàn cho nhiều worker. Giữ một replica cho đến khi có worker lease và heartbeat riêng.
+
+### Yêu cầu VPS
+
+Khuyến nghị cho production chạy VieNeu bằng CPU:
+
+| Nhu cầu | CPU | RAM | SSD | Ghi chú |
+| --- | ---: | ---: | ---: | --- |
+| Chỉ Edge TTS/gTTS | 2 vCPU | 2–4 GB | 20 GB | Không cần chạy VieNeu worker |
+| Thử nghiệm VieNeu | 2–4 vCPU | 6 GB | 25 GB | Có thể chậm hoặc thiếu bộ nhớ với job dài |
+| VieNeu production | 4 vCPU | 8 GB | 30–40 GB | Khuyến nghị, một VieNeu job đồng thời |
+| Tải cao | 8+ vCPU | 16+ GB | 50+ GB | Chỉ scale VieNeu sau khi hỗ trợ multi-worker an toàn |
+
+- Linux x86-64 (khuyến nghị Ubuntu 24.04), Docker Engine và Docker Compose.
+- Dùng volume persistent cho model cache, audio, document, job và Redis.
+- Có thể cấu hình 2–4 GB swap để giảm nguy cơ tiến trình bị kill khi RAM tăng đột biến; swap không thay thế RAM.
+- GPU là tùy chọn và cần NVIDIA GPU, driver, CUDA cùng backend tương thích.
 
 Xem thêm:
 - [`docs/redis-vieneu-queue.md`](docs/redis-vieneu-queue.md) — Redis hoạt động với VieNeu như thế nào.
@@ -213,4 +231,22 @@ Khuyến nghị dùng cùng một version cho `pyproject.toml`, Git tag và Dock
 
 ## 📄 Giấy phép
 
-MIT — Sử dụng tự do cho mục đích cá nhân và thương mại.
+Mã nguồn của project này được phát hành theo giấy phép MIT. Xem [`LICENSE`](LICENSE) để biết đầy đủ điều khoản và thông báo bản quyền gốc.
+
+## 🙏 Ghi nhận nguồn
+
+Project này là fork của [`dvchd/story2audio`](https://github.com/dvchd/story2audio), được tạo bởi **dvchd** và phát hành theo giấy phép MIT. Fork này bao gồm các thay đổi bổ sung của **duybaodg**.
+
+Chức năng tổng hợp giọng nói tiếng Việt sử dụng [`pnnbao97/VieNeu-TTS`](https://github.com/pnnbao97/VieNeu-TTS) và model [`pnnbao-ump/VieNeu-TTS-v3-Turbo`](https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo), được phát triển bởi **Phạm Nguyễn Ngọc Bảo** và phát hành theo giấy phép Apache 2.0. Khi phân phối lại code hoặc model VieNeu, hãy giữ nguyên thông báo giấy phép và ghi nhận nguồn tương ứng.
+
+Trích dẫn VieNeu-TTS trong tài liệu học thuật:
+
+```bibtex
+@misc{vieneutts2026,
+  title        = {VieNeu-TTS v3 Turbo: 48kHz Vietnamese Text-to-Speech with Instant Voice Cloning and Emotion Control},
+  author       = {Pham Nguyen Ngoc Bao},
+  year         = {2026},
+  publisher    = {Hugging Face},
+  howpublished = {\url{https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo}}
+}
+```

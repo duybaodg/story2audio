@@ -2169,7 +2169,7 @@
                     renderFileSize();
 
                     if (data.status === 'queued') {
-                        setStatus('Đang xếp hàng xử lý...');
+                        setStatus('Yêu cầu của bạn đang ở trong hàng đợi...');
                         return;
                     }
 
@@ -2316,7 +2316,10 @@
             if (MSE_SUPPORTED) {
                 currentMode = 'mse';
 
-                if (engine === 'edge') {
+                if (engine === 'vieneu') {
+                    setBadge('wait');
+                    setStatus('Yêu cầu VieNeu của bạn đã vào hàng đợi...');
+                } else if (engine === 'edge') {
                     setBadge('live');
                     setStatus('Đang tạo audio + subtitle live...');
                 } else {
@@ -2329,7 +2332,9 @@
             } else {
                 currentMode = 'fallback';
                 setBadge('wait');
-                setStatus('Trình duyệt không hỗ trợ live stream MP3, sẽ phát khi xong file...');
+                setStatus(engine === 'vieneu'
+                    ? 'Yêu cầu VieNeu của bạn đã vào hàng đợi...'
+                    : 'Trình duyệt không hỗ trợ live stream MP3, sẽ phát khi xong file...');
                 startPolling(currentCacheId, { allowDirectPlayWhenCompleted: true });
             }
 

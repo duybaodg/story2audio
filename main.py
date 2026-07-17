@@ -217,6 +217,7 @@ VIENEU_INIT_IN_WEB = os.getenv("VIENEU_INIT_IN_WEB", "").lower() in {"1", "true"
 ENABLE_GLOBAL_CACHE_CLEAR = os.getenv("ENABLE_GLOBAL_CACHE_CLEAR", "").lower() in {"1", "true", "yes"}
 AUDIO_CACHE_RETENTION_HOURS = int(os.getenv("AUDIO_CACHE_RETENTION_HOURS", "12"))
 TTS_MAX_TEXT_LENGTH = int(os.getenv("TTS_MAX_TEXT_LENGTH", "100000"))
+VIENEU_MAX_WORDS = int(os.getenv("VIENEU_MAX_WORDS", "5000"))
 
 if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
@@ -1836,6 +1837,11 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
     engine = validate_engine(detected_engine if detected_engine != "edge" else request.engine)
 
     voice = validate_voice(language, voice, engine)
+    if engine == "vieneu" and len(text_to_process.split()) > VIENEU_MAX_WORDS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"VieNeu text exceeds the {VIENEU_MAX_WORDS}-word limit",
+        )
 
     audio_quality: AudioQuality = request.audio_quality if engine == "vieneu" else "standard"
     # The current cache/file endpoints are MP3-only. Keep lossless disabled until

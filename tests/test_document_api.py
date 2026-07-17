@@ -223,6 +223,8 @@ def test_tts_rejects_unknown_vieneu_model():
 
 def test_ui_offers_both_vieneu_models_and_all_voices():
     html = client.get("/").text
+    assert "Tối đa 5.000 từ" in html
+    assert "hàng đợi Redis" in html
     assert 'value="v3_turbo"' in html
     assert 'value="v3_turbo_int8"' in html
 
@@ -296,6 +298,21 @@ def test_tts_rejects_oversized_text(monkeypatch):
         json={"text": "123456", "voice": "vi-VN-HoaiMyNeural", "engine": "edge"},
     )
     assert response.status_code == 413
+
+
+def test_vieneu_rejects_more_than_5000_words(monkeypatch):
+    monkeypatch.setattr(main, "VIENEU_MAX_WORDS", 5000)
+    response = client.post(
+        "/tts/start",
+        json={
+            "text": "word " * 5001,
+            "voice": "vieneu:default",
+            "engine": "vieneu",
+            "language": "vi",
+        },
+    )
+    assert response.status_code == 413
+    assert "5000-word limit" in response.json()["detail"]
 
 
 def test_tts_rate_limit_blocks_request():
