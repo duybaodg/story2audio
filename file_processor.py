@@ -10,8 +10,7 @@ import zipfile
 from datetime import datetime, timedelta, UTC
 from typing import Dict, Optional, List
 from pathlib import Path
-from models import UploadSession, Document, DocumentStatus, FileType
-from fastapi import BackgroundTasks
+from models import UploadSession, Document, FileType
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,95 +33,44 @@ def _get_storage_paths():
     return {
         'UPLOADS_DIR': os.path.join(base_path, "uploads"),
         'ASSEMBLED_DIR': os.path.join(base_path, "assembled"),
-        'SESSIONS_DIR': os.path.join(base_path, "sessions")
     }
 
 
-def _get_session_path(upload_id: str) -> str:
-    """Get path to session file."""
-    paths = _get_storage_paths()
-    return os.path.join(paths['SESSIONS_DIR'], f"{upload_id}.json")
+def _get_document_path(document_id: str) -> str:
+    return os.path.join(_get_storage_paths()['ASSEMBLED_DIR'], document_id, "document.json")
 
 
-async def save_session(session: UploadSession) -> None:
-    """
-    Persist session to disk for recovery.
-
-    Args:
-        session: UploadSession to persist
-    """
-    _ensure_directories()
-    path = _get_session_path(session.upload_id)
-
-    # Convert to dict, handling non-serializable types
-    session_data = session.model_dump()
-    # Convert set to list for JSON serialization
-    session_data['received_chunks'] = list(session_data.get('received_chunks', []))
-
-    with open(path, 'w') as f:
-        json.dump(session_data, f, default=str)
-
-    # Also keep in memory
-    active_sessions[session.upload_id] = session
+def save_document(document: Document) -> None:
+    """Persist document state beside its uploaded file."""
+    path = _get_document_path(document.document_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(document.model_dump(), f, default=str, ensure_ascii=False)
+    os.replace(tmp_path, path)
+    active_documents[document.document_id] = document
 
 
-async def load_session(upload_id: str) -> Optional[UploadSession]:
-    """
-    Load session from disk.
+def recover_documents() -> int:
+    """Restore persisted documents after an app restart."""
+    assembled_dir = _get_storage_paths()['ASSEMBLED_DIR']
+    if not os.path.isdir(assembled_dir):
+        return 0
 
-    Args:
-        upload_id: Session ID to load
-
-    Returns:
-        UploadSession or None if not found
-    """
-    path = _get_session_path(upload_id)
-    if not os.path.exists(path):
-        return None
-
-    with open(path, 'r') as f:
-        data = json.load(f)
-
-    # Convert received_chunks from list back to set
-    if 'received_chunks' in data and isinstance(data['received_chunks'], list):
-        data['received_chunks'] = set(data['received_chunks'])
-
-    # Reconstruct UploadSession with proper types
-    session = UploadSession(**data)
-
-    # Also restore to memory
-    active_sessions[upload_id] = session
-    return session
-
-
-async def get_pending_sessions() -> List[UploadSession]:
-    """
-    Return all non-expired pending sessions.
-
-    Returns:
-        List of UploadSession that are less than 24 hours old
-    """
-    paths = _get_storage_paths()
-    sessions_dir = paths['SESSIONS_DIR']
-
-    if not os.path.exists(sessions_dir):
-        return []
-
-    config = _get_config()
-    now = datetime.now(UTC)
-    expiry = timedelta(hours=config['UPLOAD_SESSION_EXPIRY_HOURS'])
-
-    pending = []
-    for filename in os.listdir(sessions_dir):
-        if not filename.endswith('.json'):
+    recovered = []
+    for name in os.listdir(assembled_dir):
+        path = _get_document_path(name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                document = Document(**json.load(f))
+            if os.path.isfile(document.file_path):
+                active_documents[document.document_id] = document
+                recovered.append(document)
+        except (OSError, ValueError, json.JSONDecodeError):
             continue
 
-        upload_id = filename[:-5]  # Remove .json
-        session = await load_session(upload_id)
-        if session and (now - session.created_at) < expiry:
-            pending.append(session)
-
-    return pending
+    document_queue[:] = [doc.document_id for doc in sorted(recovered, key=lambda doc: doc.upload_date)]
+    return len(recovered)
 
 
 # In-memory storage
@@ -246,8 +194,7 @@ async def initiate_upload(
         owner_session=owner_session,
     )
 
-    # Persist session to disk
-    await save_session(session)
+    active_sessions[upload_id] = session
 
     return session
 
@@ -313,9 +260,6 @@ async def receive_chunk(
         raise ValueError(f"Failed to write chunk {chunk_number}: {e}")
 
     session.received_chunks.add(chunk_number)
-
-    # Persist updated session
-    await save_session(session)
 
     return True
 
@@ -387,12 +331,8 @@ async def complete_upload(upload_id: str) -> Document:
 
     active_documents[upload_id] = document
     document_queue.append(upload_id)  # Add to queue
+    save_document(document)
     del active_sessions[upload_id]
-
-    # Delete session file
-    session_path = _get_session_path(upload_id)
-    if os.path.exists(session_path):
-        os.remove(session_path)
 
     # Clean up temp directory
     shutil.rmtree(session.temp_dir, ignore_errors=True)
@@ -499,7 +439,7 @@ async def cleanup_expired_sessions():
         del active_sessions[session_id]
 
     paths = _get_storage_paths()
-    for root in (paths['UPLOADS_DIR'], paths['ASSEMBLED_DIR'], paths['SESSIONS_DIR']):
+    for root in (paths['UPLOADS_DIR'], paths['ASSEMBLED_DIR']):
         if not os.path.exists(root):
             continue
         for name in os.listdir(root):
@@ -531,11 +471,3 @@ async def start_cleanup_scheduler():
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
         await asyncio.sleep(3600)  # Run every hour
-
-
-def register_cleanup_task(background_tasks: BackgroundTasks):
-    """
-    Register cleanup scheduler task to run in background continuously.
-    Call this during FastAPI startup event.
-    """
-    background_tasks.add_task(start_cleanup_scheduler)

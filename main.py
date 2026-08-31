@@ -12,8 +12,7 @@ import unicodedata
 import threading
 import traceback
 import secrets
-from datetime import timedelta
-from typing import List, Dict, AsyncGenerator, Literal, Optional, Tuple, Union
+from typing import List, Dict, AsyncGenerator, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
@@ -31,12 +30,12 @@ from document_api import router as document_router
 # Audio quality imports
 from vieneu_audio_quality import (
     process_vienneu_audio,
-    get_file_extension,
     AudioQuality,
 )
-from vieneu_model import get_pool_size
+from vieneu_model import VIENEU_MODEL, get_pool_size
 from tts_queue import (
     TTSQueueError,
+    close_async_client,
     enqueue_vieneu_tts_job,
     is_vieneu_cancelled_sync,
     redis_is_ready,
@@ -218,6 +217,7 @@ ENABLE_GLOBAL_CACHE_CLEAR = os.getenv("ENABLE_GLOBAL_CACHE_CLEAR", "").lower() i
 AUDIO_CACHE_RETENTION_HOURS = int(os.getenv("AUDIO_CACHE_RETENTION_HOURS", "12"))
 TTS_MAX_TEXT_LENGTH = int(os.getenv("TTS_MAX_TEXT_LENGTH", "100000"))
 VIENEU_MAX_WORDS = int(os.getenv("VIENEU_MAX_WORDS", "5000"))
+VIENEU_CHUNK_SIZE = int(os.getenv("VIENEU_CHUNK_SIZE", "500"))
 
 if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
@@ -365,7 +365,6 @@ class TTSRequest(BaseModel):
     engine: str = "edge"   # edge | gtts
     language: str = "vi"
     audio_quality: AudioQuality = "standard"
-    model: Optional[Literal["v3_turbo", "v3_turbo_int8"]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -385,18 +384,16 @@ def get_cache_id(text: str, voice: str, engine: str, language: str, variant: str
 def estimate_conversion_seconds(
     text: str,
     engine: str,
-    model: Optional[str] = None,
     chunk_count: int = 1,
 ) -> int:
     """Return a conservative conversion estimate for an average CPU server."""
     chars_per_second = {
         "edge": 45.0,
         "gtts": 35.0,
-        "v3_turbo": 2.5,
         "v3_turbo_int8": 7.5,
     }
-    profile = model if engine == "vieneu" else engine
-    rate = chars_per_second.get(profile or "v3_turbo", 2.5)
+    profile = VIENEU_MODEL if engine == "vieneu" else engine
+    rate = chars_per_second.get(profile, 2.5)
     startup_seconds = 8 if engine == "vieneu" else max(2, chunk_count)
     return max(3, math.ceil(len(text) / rate + startup_seconds))
 
@@ -426,6 +423,10 @@ def get_cues_jsonl_path(cache_id: str) -> str:
 
 
 def save_cache_meta(cache_id: str, data: dict) -> None:
+    if "owners" not in data:
+        existing = load_cache_meta(cache_id)
+        if existing and "owners" in existing:
+            data = {**data, "owners": existing["owners"]}
     meta_path = get_meta_path(cache_id)
     tmp_path = f"{meta_path}.tmp.{os.getpid()}.{threading.get_ident()}"
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -942,12 +943,12 @@ def split_text_into_chunks(text: str, language: str = "vi") -> List[str]:
 
 
 def split_text_for_engine(text: str, engine: str, language: str = "vi") -> List[str]:
-    """Return app-level chunks; VieNeu handles its own TTS chunking internally."""
+    """Return app-level chunks tuned for each engine."""
     text = normalize_text(text)
     if not text:
         return []
     if engine == "vieneu":
-        return [text]
+        return split_long_text_gently(text, VIENEU_CHUNK_SIZE)
     return split_text_into_chunks(text, language=language)
 
 
@@ -981,7 +982,7 @@ def validate_voice(language: str, voice: str, engine: str) -> str:
         if not voice.startswith("vieneu:"):
             raise HTTPException(
                 status_code=400,
-                detail=f"VieNeu voice must start with 'vieneu:'",
+                detail="VieNeu voice must start with 'vieneu:'",
             )
         preset_id = voice.split(":", 1)[1]
         if preset_id != "default":
@@ -1202,7 +1203,7 @@ def mp3_duration_seconds(data: bytes) -> float:
     data_len = len(data)
 
     while pos + 4 <= data_len:
-        b1, b2, b3, b4 = data[pos], data[pos + 1], data[pos + 2], data[pos + 3]
+        b1, b2, b3 = data[pos], data[pos + 1], data[pos + 2]
         if b1 != 0xFF or (b2 & 0xE0) != 0xE0:
             pos += 1
             continue
@@ -1325,7 +1326,6 @@ async def vieneu_tts_to_audio(
     audio_quality: AudioQuality = "standard",
     add_natural_pauses: bool = True,
     pause_duration_ms: int = 300,
-    model: Optional[str] = None,
 ) -> tuple[bytes, str]:
     """
     Generate audio using VieNeu-TTS with quality enhancements.
@@ -1347,7 +1347,7 @@ async def vieneu_tts_to_audio(
 
     def _generate():
         # Acquire model lock for inference
-        with get_vieneu_model(model) as tts:
+        with get_vieneu_model() as tts:
             try:
                 voice_arg = resolve_vieneu_voice_arg(tts, voice)
                 if voice_arg:
@@ -1376,7 +1376,6 @@ def vieneu_tts_to_audio_sync(
     audio_quality: AudioQuality = "standard",
     add_natural_pauses: bool = True,
     pause_duration_ms: int = 300,
-    model: Optional[str] = None,
 ) -> tuple[bytes, str]:
     """
     Synchronous wrapper for VieNeu TTS with quality enhancements.
@@ -1395,7 +1394,7 @@ def vieneu_tts_to_audio_sync(
     from vieneu_model import get_vieneu_model
 
     # Acquire model lock for inference
-    with get_vieneu_model(model) as tts:
+    with get_vieneu_model() as tts:
         try:
             voice_arg = resolve_vieneu_voice_arg(tts, voice)
             if voice_arg:
@@ -1451,7 +1450,6 @@ def generate_chunks_sync(
     audio_quality: AudioQuality = "standard",
     add_natural_pauses: bool = True,
     pause_duration_ms: int = 300,
-    model: Optional[str] = None,
 ):
     """
     Synchronous wrapper for generate_chunks to use with BackgroundTasks.
@@ -1481,7 +1479,6 @@ def generate_chunks_sync(
                 audio_quality=audio_quality,
                 add_natural_pauses=add_natural_pauses,
                 pause_duration_ms=pause_duration_ms,
-                model=model,
             )
         )
         print(f"[BG-TASK] Completed generate_chunks for {cache_id}")
@@ -1505,7 +1502,6 @@ async def generate_chunks(
     audio_quality: AudioQuality = "standard",
     add_natural_pauses: bool = True,
     pause_duration_ms: int = 300,
-    model: Optional[str] = None,
 ):
     if cache_id not in _generation_locks:
         _generation_locks[cache_id] = asyncio.Lock()
@@ -1541,7 +1537,7 @@ async def generate_chunks(
                     "text_hash": md5_short(text),
                     "voice": voice,
                     "engine": engine,
-                    "model": model if engine == "vieneu" else None,
+                    "model": VIENEU_MODEL if engine == "vieneu" else None,
                     "language": language,
                     "subtitle_supported": engine == "edge",
                     "subtitle_ready": False,
@@ -1552,7 +1548,7 @@ async def generate_chunks(
 
         total = len(chunks)
         timing_meta = {
-            "estimated_seconds": estimate_conversion_seconds(text, engine, model, total),
+            "estimated_seconds": estimate_conversion_seconds(text, engine, total),
             "started_at": time.time(),
         }
 
@@ -1575,7 +1571,7 @@ async def generate_chunks(
                 "text_hash": md5_short(text),
                 "voice": voice,
                 "engine": engine,
-                "model": model if engine == "vieneu" else None,
+                "model": VIENEU_MODEL if engine == "vieneu" else None,
                 "language": language,
                 "subtitle_supported": engine == "edge",
                 "subtitle_ready": False,
@@ -1602,7 +1598,7 @@ async def generate_chunks(
                             "text_hash": md5_short(text),
                             "voice": voice,
                             "engine": engine,
-                            "model": model if engine == "vieneu" else None,
+                            "model": VIENEU_MODEL if engine == "vieneu" else None,
                             "language": language,
                             "subtitle_supported": engine == "edge",
                             "subtitle_ready": False,
@@ -1625,7 +1621,7 @@ async def generate_chunks(
                         "text_hash": md5_short(text),
                         "voice": voice,
                         "engine": engine,
-                        "model": model if engine == "vieneu" else None,
+                        "model": VIENEU_MODEL if engine == "vieneu" else None,
                         "language": language,
                         "subtitle_supported": engine == "edge",
                         "subtitle_ready": False,
@@ -1645,7 +1641,6 @@ async def generate_chunks(
                         audio_quality,
                         add_natural_pauses,
                         pause_duration_ms if i < total - 1 else 0,  # No pause on last chunk
-                        model,
                     )
                     words = []  # VieNeu doesn't provide word-level timing
                 else:  # gtts
@@ -1698,7 +1693,7 @@ async def generate_chunks(
                         "text_hash": md5_short(text),
                         "voice": voice,
                         "engine": engine,
-                        "model": model if engine == "vieneu" else None,
+                        "model": VIENEU_MODEL if engine == "vieneu" else None,
                         "language": language,
                         "subtitle_supported": engine == "edge",
                         "subtitle_ready": False,
@@ -1729,7 +1724,7 @@ async def generate_chunks(
                     "text_hash": md5_short(text),
                     "voice": voice,
                     "engine": engine,
-                    "model": model if engine == "vieneu" else None,
+                    "model": VIENEU_MODEL if engine == "vieneu" else None,
                     "language": language,
                     "subtitle_supported": engine == "edge",
                     "subtitle_ready": subtitle_ready,
@@ -1753,7 +1748,7 @@ async def generate_chunks(
                     "text_hash": md5_short(text),
                     "voice": voice,
                     "engine": engine,
-                    "model": model if engine == "vieneu" else None,
+                    "model": VIENEU_MODEL if engine == "vieneu" else None,
                     "language": language,
                     "subtitle_supported": engine == "edge",
                     "subtitle_ready": False,
@@ -1808,7 +1803,7 @@ async def health_check():
 
 
 @app.post("/tts/start")
-async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
+async def start_tts(http_request: Request, background_tasks: BackgroundTasks, request: TTSRequest):
     # If source_chapters provided, concatenate texts
     # NOTE: MVP validation - uses .get("text", "") for safety.
     # Missing "text" keys result in empty strings, caught by validation below.
@@ -1849,11 +1844,14 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
     if audio_quality == "lossless":
         audio_quality = "high"
 
-    cache_variant = f"{request.model or 'configured'}:{audio_quality}" if engine == "vieneu" else ""
+    cache_variant = f"{VIENEU_MODEL}:{audio_quality}" if engine == "vieneu" else ""
     cache_id = get_cache_id(text_to_process, voice, engine, language, cache_variant)
+    owner = http_request.state.session_id
     require_subtitles = engine == "edge"
 
     if is_cache_valid(cache_id, require_subtitles=require_subtitles):
+        meta = load_cache_meta(cache_id) or {}
+        save_cache_meta(cache_id, {**meta, "owners": list(set(meta.get("owners", [])) | {owner})})
         return {
             "cache_id": cache_id,
             "status": "completed",
@@ -1864,6 +1862,8 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
 
     current = get_effective_status(cache_id)
     if current and current.get("status") in {"queued", "processing", "generating"}:
+        meta = load_cache_meta(cache_id) or current
+        save_cache_meta(cache_id, {**meta, "owners": list(set(meta.get("owners", [])) | {owner})})
         return {
             "cache_id": cache_id,
             "status": current.get("status"),
@@ -1878,7 +1878,6 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
     estimated_seconds = estimate_conversion_seconds(
         text_to_process,
         engine,
-        request.model,
         len(chunk_preview),
     )
 
@@ -1889,12 +1888,13 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
         "text_hash": md5_short(text_to_process),
         "voice": voice,
         "engine": engine,
-        "model": request.model if engine == "vieneu" else None,
+        "model": VIENEU_MODEL if engine == "vieneu" else None,
         "estimated_seconds": estimated_seconds,
         "language": language,
         "subtitle_supported": engine == "edge",
         "subtitle_ready": False,
         "subtitle_cues": 0,
+        "owners": [owner],
     }
 
     if engine == "vieneu":
@@ -1909,7 +1909,6 @@ async def start_tts(background_tasks: BackgroundTasks, request: TTSRequest):
                     "language": language,
                     "chunks": chunk_preview,
                     "audio_quality": audio_quality,
-                    "model": request.model,
                 }
             )
         except TTSQueueError as exc:
@@ -1965,9 +1964,12 @@ async def get_status(cache_id: str):
 
 
 @app.delete("/tts/file/{cache_id}")
-async def delete_audio(cache_id: str):
+async def delete_audio(request: Request, cache_id: str):
     """Cancel ongoing generation or delete completed audio file."""
     cache_id = validate_cache_id(cache_id)
+    metadata = load_cache_meta(cache_id)
+    if not metadata or request.state.session_id not in metadata.get("owners", []):
+        raise HTTPException(status_code=404, detail="Not found")
 
     # Check if generation is in progress
     in_progress = cache_id in generation_status
@@ -2382,7 +2384,10 @@ async def health():
 @app.on_event("startup")
 async def startup_event():
     """Register background cleanup task on startup and recover orphan jobs."""
-    from file_processor import start_cleanup_scheduler
+    from file_processor import recover_documents, start_cleanup_scheduler
+    documents_recovered = recover_documents()
+    if documents_recovered:
+        logger.info("Recovered %d persisted document(s)", documents_recovered)
     asyncio.create_task(start_cleanup_scheduler())
     logger.info("Document upload cleanup task started")
 
@@ -2417,6 +2422,7 @@ async def startup_event():
 async def shutdown_event():
     """Clean up resources on shutdown."""
     await rate_limiter.close()
+    await close_async_client()
     logger.info("Rate limiter closed")
 
 

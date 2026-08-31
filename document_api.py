@@ -1,11 +1,11 @@
 # document_api.py
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
-from typing import Optional, List
+from typing import List
 from pydantic import BaseModel, Field
 import json
 import asyncio
-from models.document import Document, Chapter, DocumentStatus
+from models.document import DocumentStatus
 from file_processor import (
     initiate_upload,
     receive_chunk,
@@ -14,6 +14,7 @@ from file_processor import (
     get_document,
     get_queue,
     delete_document,
+    save_document,
     active_sessions,
     active_documents
 )
@@ -23,7 +24,6 @@ from job_queue import (
     get_job_status,
     retry_job,
     cancel_job,
-    ExtractionJob,
     JobStatus
 )
 
@@ -195,7 +195,6 @@ async def upload_complete(request: Request, upload_id: str = Form(...)):
         document = await complete_upload(upload_id)
 
         # Trigger background extraction
-        from fastapi import BackgroundTasks
         # Note: Background extraction will be added in next task
 
         return {
@@ -258,7 +257,7 @@ async def stream_extraction(request: Request, document_id: str):
     # NOTE: Thread safety limitation - multiple simultaneous requests to same document
     # could cause race conditions. Production use should add locks.
     document.status = DocumentStatus.EXTRACTING
-    active_documents[document_id] = document
+    save_document(document)
 
     async def event_generator():
         try:
@@ -324,7 +323,7 @@ async def stream_extraction(request: Request, document_id: str):
                 for ch in progress_chapters
             ]
 
-            active_documents[document_id] = document
+            save_document(document)
 
             # Send completion event
             complete_data = {
@@ -345,7 +344,7 @@ async def stream_extraction(request: Request, document_id: str):
             # NOTE: Thread safety limitation - multiple simultaneous requests to same document
             # could cause race conditions. Production use should add locks.
             document.status = DocumentStatus.ERROR
-            active_documents[document_id] = document
+            save_document(document)
 
     return StreamingResponse(
         event_generator(),
@@ -487,7 +486,7 @@ async def submit_job_extraction(request: Request, document_id: str):
 
     # Update document status
     document.status = DocumentStatus.EXTRACTING
-    active_documents[document_id] = document
+    save_document(document)
 
     return {
         "job_id": job_id,

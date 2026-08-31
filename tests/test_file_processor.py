@@ -1,6 +1,5 @@
 # tests/test_file_processor.py
 import pytest
-import asyncio
 import hashlib
 from datetime import datetime, timedelta
 from datetime import UTC
@@ -22,10 +21,10 @@ from file_processor import (
     complete_upload,
     get_document,
     cleanup_expired_sessions,
-    start_cleanup_scheduler,
-    register_cleanup_task,
+    recover_documents,
     active_sessions,
-    active_documents
+    active_documents,
+    document_queue,
 )
 from models import Document, FileType
 
@@ -40,6 +39,7 @@ def cleanup_storage():
     # Clear in-memory storage
     active_sessions.clear()
     active_documents.clear()
+    document_queue.clear()
 
     # Clean up temp files
     if temp_path and os.path.exists(temp_path):
@@ -120,6 +120,12 @@ async def test_complete_upload():
     assert session.upload_id not in active_sessions
     assert document.document_id in active_documents
     assert Path(document.file_path).exists()
+    assert (Path(document.file_path).parent / "document.json").exists()
+
+    active_documents.clear()
+    document_queue.clear()
+    assert recover_documents() == 1
+    assert (await get_document(document.document_id)).filename == "complete.pdf"
 
 @pytest.mark.asyncio
 async def test_upload_size_limit():

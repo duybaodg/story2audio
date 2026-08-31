@@ -109,8 +109,9 @@ Recommended settings:
 
 ```env
 VIENEU_MAX_WORKERS=1
-VIENEU_MODE=v3_turbo
 VIENEU_SAMPLE_RATE=48000
+VIENEU_CHUNK_SIZE=500
+VIENEU_WARMUP_ITERATIONS=1
 REDIS_URL=<managed-redis-url>
 HF_TOKEN=<optional-huggingface-token>
 ```
@@ -185,8 +186,9 @@ Cheap deployment profile:
 MAX_WORKERS=1
 VIENEU_INIT_IN_WEB=false
 VIENEU_MAX_WORKERS=1
-VIENEU_MODE=v3_turbo
 VIENEU_SAMPLE_RATE=48000
+VIENEU_CHUNK_SIZE=500
+VIENEU_WARMUP_ITERATIONS=1
 TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS=300
 ```
 
@@ -251,8 +253,8 @@ Suggested release flow:
 # pyproject.toml -> version = "4.0.0"
 
 # 2. Run tests
-python -m py_compile main.py tts_queue.py tts_worker.py
-pytest
+uv run python -m py_compile main.py tts_queue.py tts_worker.py
+uv run pytest
 
 # 3. Tag release
 git tag v4.0.0

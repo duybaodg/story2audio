@@ -1,6 +1,5 @@
 # tests/test_text_extractor.py
 import pytest
-import asyncio
 import sys
 import os
 
@@ -8,8 +7,6 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from text_extractor import (
-    extract_pdf_text,
-    extract_epub_text,
     _assess_text_quality,
     _detect_chapters_in_text
 )

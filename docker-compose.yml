@@ -1,9 +1,10 @@
 services:
   redis:
-    image: redis:alpine
+    image: redis:7-alpine
     container_name: ebook2audio_redis
     restart: unless-stopped
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    # Queue jobs must fail visibly under memory pressure, never be evicted silently.
+    command: redis-server --maxmemory 128mb --maxmemory-policy noeviction
     volumes:
       - ebook2audio_redis:/data
     healthcheck:
@@ -38,9 +39,8 @@ services:
       # Web process should not load the heavy VieNeu model. The worker owns it.
       VIENEU_INIT_IN_WEB: "false"
       VIENEU_MAX_WORKERS: "1"
-      # v3 Turbo is the default. It auto-selects CPU ONNX or GPU PyTorch.
-      VIENEU_MODE: "${VIENEU_MODE:-v3_turbo}"
       VIENEU_SAMPLE_RATE: "${VIENEU_SAMPLE_RATE:-48000}"
+      VIENEU_CHUNK_SIZE: "${VIENEU_CHUNK_SIZE:-500}"
       # Redis connection for rate limiting
       REDIS_URL: "redis://redis:6379"
       TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
@@ -75,6 +75,7 @@ services:
       start_period: 20s
 
   vieneu-worker:
+    profiles: ["vieneu"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -96,8 +97,8 @@ services:
       REDIS_URL: "redis://redis:6379"
       TTS_MAX_QUEUE_SIZE: "${TTS_MAX_QUEUE_SIZE:-20}"
       VIENEU_MAX_WORKERS: "1"
-      VIENEU_MODE: "${VIENEU_MODE:-v3_turbo}"
       VIENEU_SAMPLE_RATE: "${VIENEU_SAMPLE_RATE:-48000}"
+      VIENEU_CHUNK_SIZE: "${VIENEU_CHUNK_SIZE:-500}"
       HF_TOKEN: "${HF_TOKEN:-}"
     volumes:
       - ebook2audio_cache:/app/audio_cache

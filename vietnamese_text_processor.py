@@ -10,7 +10,7 @@ Provides intelligent text segmentation for TTS that respects:
 
 import re
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 logger = logging.getLogger("ebook2audio")
 

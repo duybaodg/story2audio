@@ -21,7 +21,6 @@ from vieneu_model import (
     get_pool_size,
     get_pool_info,
     get_vieneu_config,
-    initialize_model_pool,
 )
 
 
@@ -41,91 +40,22 @@ class TestVieneuModelPool:
         # max_workers reflects the configured pool size (1 for sequential)
         assert info["max_workers"] == 1
 
-    def test_default_config_uses_v3_turbo(self, monkeypatch):
-        """Test that the default VieNeu config uses v3 Turbo."""
-        for key in [
-            "VIENEU_MODE",
-            "VIENEU_MODEL_REPO",
-            "VIENEU_BACKBONE_DEVICE",
-            "VIENEU_CODEC_REPO",
-            "VIENEU_CODEC_DEVICE",
-            "VIENEU_GGUF_FILENAME",
-            "HF_TOKEN",
-            "HUGGING_FACE_HUB_TOKEN",
-        ]:
-            monkeypatch.delenv(key, raising=False)
-
+    def test_config_uses_only_v3_turbo_int8(self):
         config = get_vieneu_config()
 
-        assert config["mode"] == "v3_turbo"
-        assert config["kwargs"] == {}
+        assert config == {
+            "mode": "v3_turbo_int8",
+            "kwargs": {"mode": "v3turbo", "precision": "int8"},
+        }
 
-    @pytest.mark.parametrize(
-        ("variant", "precision"),
-        [("v3_turbo", "fp32"), ("v3_turbo_int8", "int8")],
-    )
-    def test_selectable_v3_precision(self, monkeypatch, variant, precision):
+    def test_creates_int8_model(self, monkeypatch):
         calls = []
 
         monkeypatch.setattr("vieneu.Vieneu", lambda **kwargs: calls.append(kwargs) or object())
 
-        create_vieneu_instance(variant)
+        create_vieneu_instance()
 
-        assert calls == [{"mode": "v3turbo", "precision": precision}]
-
-    def test_v2_turbo_config_uses_turbo_cpu_args(self, monkeypatch):
-        """Test that legacy v2 Turbo mode remains available explicitly."""
-        monkeypatch.setenv("VIENEU_MODE", "v2_turbo")
-        for key in [
-            "VIENEU_MODEL_REPO",
-            "VIENEU_BACKBONE_FILENAME",
-            "VIENEU_DEVICE",
-            "VIENEU_DECODER_REPO",
-            "VIENEU_ENCODER_REPO",
-        ]:
-            monkeypatch.delenv(key, raising=False)
-
-        config = get_vieneu_config()
-
-        assert config["mode"] == "v2_turbo"
-        assert config["kwargs"]["backbone_repo"] == "pnnbao-ump/VieNeu-TTS-v2-Turbo-GGUF"
-        assert config["kwargs"]["backbone_filename"] == "vieneu-tts-v2-turbo.gguf"
-        assert config["kwargs"]["decoder_repo"] == "pnnbao-ump/VieNeu-Codec"
-        assert config["kwargs"]["encoder_repo"] == "pnnbao-ump/VieNeu-Codec"
-        assert config["kwargs"]["device"] == "cpu"
-        assert "backbone_device" not in config["kwargs"]
-        assert "codec_repo" not in config["kwargs"]
-        assert "gguf_filename" not in config["kwargs"]
-
-    def test_v2_standard_config_uses_standard_args(self, monkeypatch):
-        """Test that legacy v2 Standard mode remains available explicitly."""
-        monkeypatch.setenv("VIENEU_MODE", "v2_standard")
-        monkeypatch.delenv("VIENEU_MODEL_REPO", raising=False)
-
-        config = get_vieneu_config()
-
-        assert config["mode"] == "v2_standard"
-        assert config["kwargs"]["backbone_repo"] == "pnnbao-ump/VieNeu-TTS-v2"
-        assert config["kwargs"]["backbone_device"] == "cpu"
-        assert config["kwargs"]["gguf_filename"] == "VieNeu-TTS-v2-Q4-K-M.gguf"
-
-    def test_turbo_gpu_config_uses_turbo_gpu_args(self, monkeypatch):
-        """Test that GPU Turbo mode passes the constructor arguments VieNeu expects."""
-        monkeypatch.setenv("VIENEU_MODE", "v2_turbo_gpu")
-        monkeypatch.setenv("VIENEU_DEVICE", "cuda")
-        monkeypatch.setenv("VIENEU_TURBO_BACKEND", "lmdeploy")
-        monkeypatch.delenv("VIENEU_MODEL_REPO", raising=False)
-
-        config = get_vieneu_config()
-
-        assert config["mode"] == "v2_turbo_gpu"
-        assert config["kwargs"]["backbone_repo"] == "pnnbao-ump/VieNeu-TTS-v2-Turbo"
-        assert config["kwargs"]["decoder_repo"] == "pnnbao-ump/VieNeu-Codec"
-        assert config["kwargs"]["encoder_repo"] == "pnnbao-ump/VieNeu-Codec"
-        assert config["kwargs"]["device"] == "cuda"
-        assert config["kwargs"]["backend"] == "lmdeploy"
-        assert "backbone_device" not in config["kwargs"]
-        assert "codec_repo" not in config["kwargs"]
+        assert calls == [{"mode": "v3turbo", "precision": "int8"}]
 
 
 class TestVieneuSequentialProcessing:
@@ -138,12 +68,11 @@ class TestVieneuSequentialProcessing:
 
     def test_chunk_size_limit(self):
         """Test that VieNeu uses 500 character chunk limit."""
-        from main import split_text_into_chunks
-        from vietnamese_text_processor import create_vietnamese_chunks
+        from main import split_text_for_engine
 
         # Test that the 500 char limit is used for VieNeu
         long_text = "Xin chào, " * 100  # ~1000 characters
-        chunks = create_vietnamese_chunks(long_text, max_chunk_size=500)
+        chunks = split_text_for_engine(long_text, "vieneu")
 
         # Should have multiple chunks
         assert len(chunks) >= 2
@@ -155,7 +84,7 @@ class TestVieneuSequentialProcessing:
 
     def test_sequential_processing_preserves_order(self):
         """Test that chunks are processed in correct order sequentially."""
-        from unittest.mock import patch, Mock
+        from unittest.mock import patch
         import main
 
         # Mock the model to track call order

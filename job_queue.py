@@ -5,9 +5,9 @@ import json
 from datetime import datetime, timedelta, UTC
 from typing import Optional, Dict, List, Callable
 from enum import Enum
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, Future
 import threading
+import time
 
 from pydantic import BaseModel, Field
 from text_extractor import extract_pdf_text_blocking, extract_epub_text_blocking
@@ -41,6 +41,7 @@ class ExtractionJob(BaseModel):
 
 # In-memory job tracking
 _active_jobs: Dict[str, Future] = {}
+_cancelled_jobs: set[str] = set()
 _jobs_lock = threading.Lock()
 _job_files_lock = threading.Lock()
 
@@ -72,13 +73,6 @@ def _load_job(job_id: str) -> Optional[ExtractionJob]:
         with open(path, 'r') as f:
             data = json.load(f)
     return ExtractionJob(**data)
-
-
-def _delete_job_file(job_id: str):
-    path = _get_job_path(job_id)
-    with _job_files_lock:
-        if os.path.exists(path):
-            os.remove(path)
 
 
 # Worker pool
@@ -133,12 +127,22 @@ def _job_worker(job_id: str, document_id: str, file_path: str, file_type: str):
         job.message = "Starting extraction..."
         _save_job(job)
 
-        # Create progress callback
+        deadline = time.monotonic() + JOB_TIMEOUT_MINUTES * 60
+
+        # Both extractors report progress here, so cancellation and timeout live once.
         def callback(progress: float, message: str):
+            with _jobs_lock:
+                cancelled = job_id in _cancelled_jobs
+            if cancelled:
+                raise RuntimeError("Cancelled by user")
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Extraction timed out after {JOB_TIMEOUT_MINUTES} minutes")
             _update_job_progress(job_id, progress, message)
 
         # Run extraction (blocking)
+        callback(0.0, "Starting extraction...")
         chapters = _run_extraction_blocking(document_id, file_path, file_type, callback)
+        callback(1.0, "Finishing extraction...")
 
         # Store result
         job.status = JobStatus.COMPLETED
@@ -148,7 +152,7 @@ def _job_worker(job_id: str, document_id: str, file_path: str, file_type: str):
         job.result = {"chapters": chapters}
 
         # Update document status to READY
-        from file_processor import active_documents
+        from file_processor import active_documents, save_document
         from models import DocumentStatus
         doc = active_documents.get(document_id)
         if doc:
@@ -157,6 +161,7 @@ def _job_worker(job_id: str, document_id: str, file_path: str, file_type: str):
             doc.extraction_progress = 1.0
             # Store chapters in metadata for content retrieval
             doc.metadata["chapters"] = chapters
+            save_document(doc)
 
     except Exception as e:
         job.status = JobStatus.FAILED
@@ -165,17 +170,19 @@ def _job_worker(job_id: str, document_id: str, file_path: str, file_type: str):
         job.completed_at = datetime.now(UTC)
 
         # Update document status to ERROR
-        from file_processor import active_documents
+        from file_processor import active_documents, save_document
         from models import DocumentStatus
         doc = active_documents.get(document_id)
         if doc:
             doc.status = DocumentStatus.ERROR
+            save_document(doc)
 
     finally:
         _save_job(job)
         # Remove from active jobs
         with _jobs_lock:
             _active_jobs.pop(job_id, None)
+            _cancelled_jobs.discard(job_id)
 
 
 async def submit_extraction_job(document_id: str, file_path: str, file_type: str) -> str:
@@ -271,8 +278,10 @@ def cancel_job(job_id: str) -> bool:
     with _jobs_lock:
         future = _active_jobs.get(job_id)
         if future and not future.done():
-            future.cancel()
-            _active_jobs.pop(job_id, None)
+            _cancelled_jobs.add(job_id)
+            if future.cancel():
+                _active_jobs.pop(job_id, None)
+                _cancelled_jobs.discard(job_id)
 
             # Update job status
             job = _load_job(job_id)

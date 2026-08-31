@@ -104,11 +104,11 @@ Truy cập [ebook2audio.hoctuthien.com](https://ebook2audio.hoctuthien.com), dá
 ```bash
 git clone https://github.com/duybaodg/story2audio.git
 cd story2audio
-docker compose up -d --build
+docker compose --profile vieneu up -d --build
 ```
 Truy cập `http://localhost:8000` để sử dụng.
 
-Compose chạy 3 service:
+Profile `vieneu` chạy 3 service:
 - `app`: FastAPI/UI/API, không tải model VieNeu nặng.
 - `vieneu-worker`: xử lý VieNeu-TTS tuần tự từ Redis queue.
 - `redis`: rate limit upload và queue cho VieNeu jobs.
@@ -119,8 +119,9 @@ Thiết lập tối thiểu khuyến nghị cho VPS nhỏ:
 MAX_WORKERS=1
 VIENEU_INIT_IN_WEB=false
 VIENEU_MAX_WORKERS=1
-VIENEU_MODE=v3_turbo
 VIENEU_SAMPLE_RATE=48000
+VIENEU_CHUNK_SIZE=500
+VIENEU_WARMUP_ITERATIONS=1
 TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS=300
 ```
 
@@ -146,7 +147,7 @@ Khuyến nghị cho production chạy VieNeu bằng CPU:
 
 Xem thêm:
 - [`docs/redis-vieneu-queue.md`](docs/redis-vieneu-queue.md) — Redis hoạt động với VieNeu như thế nào.
-- [`docs/project-structure.md`](docs/project-structure.md) — cấu trúc project và vai trò từng file chính.
+- [`docs/project-structure.md`](docs/project-structure.md) — hướng dẫn kỹ thuật đầy đủ: kiến trúc, API, cấu hình, triển khai và vận hành.
 - [`docs/azure-deployment.md`](docs/azure-deployment.md) — quản lý version và kiến trúc Azure.
 - [`docs/azure-deploy-plan.md`](docs/azure-deploy-plan.md) — checklist triển khai Azure từng bước.
 
@@ -173,32 +174,12 @@ PORT=8000
 ENABLE_DEBUG_TTS=false                          # Bật debug trên production
 ```
 
-VieNeu mặc định chạy bằng **VieNeu-TTS v3 Turbo** với audio 48 kHz, voice built-in và tự chọn CPU ONNX hoặc GPU PyTorch theo môi trường:
+VieNeu dùng duy nhất **VieNeu-TTS v3 Turbo INT8** để giảm RAM, dung lượng model và thời gian CPU. Model không thể đổi qua request hay biến môi trường:
 
 ```env
-VIENEU_MODE=v3_turbo
 VIENEU_SAMPLE_RATE=48000
-```
-
-Nếu cần quay về model v2 cũ, có thể dùng:
-
-```env
-VIENEU_MODE=v2_standard
-```
-
-Hoặc v2 Turbo CPU:
-
-```env
-VIENEU_MODE=v2_turbo
-VIENEU_DEVICE=cpu
-```
-
-Hoặc v2 Turbo GPU nếu chạy trên NVIDIA GPU và đã có CUDA/LMDeploy phù hợp:
-
-```env
-VIENEU_MODE=v2_turbo_gpu
-VIENEU_DEVICE=cuda
-VIENEU_TURBO_BACKEND=lmdeploy
+VIENEU_CHUNK_SIZE=500
+VIENEU_WARMUP_ITERATIONS=1
 ```
 
 ---
@@ -224,7 +205,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 Khuyến nghị dùng cùng một version cho `pyproject.toml`, Git tag và Docker image tag, ví dụ `v4.0.0`. Nếu triển khai lên Azure, dùng kiến trúc `app` + `vieneu-worker` + Redis + Azure Files như mô tả trong [`docs/azure-deployment.md`](docs/azure-deployment.md), rồi làm theo runbook [`docs/azure-deploy-plan.md`](docs/azure-deploy-plan.md).
 
 ### Tài liệu kỹ thuật
-- [`docs/project-structure.md`](docs/project-structure.md) — bản đồ cấu trúc source code, runtime data, test và service.
+- [`docs/project-structure.md`](docs/project-structure.md) — hướng dẫn kỹ thuật đầy đủ: kiến trúc, API, cấu hình, triển khai và xử lý sự cố.
 - [`docs/redis-vieneu-queue.md`](docs/redis-vieneu-queue.md) — luồng Redis queue, worker, cancellation và recovery cho VieNeu.
 
 ---

@@ -24,8 +24,8 @@ jobs:
       - run: uv run pytest
       - run: uv run python -m py_compile main.py tts_queue.py tts_worker.py
       - run: node --check static/app.js
-      - run: cp .env.example .env && docker compose config --quiet
-      - run: docker compose build
+      - run: cp .env.example .env && docker compose --profile vieneu config --quiet
+      - run: docker compose --profile vieneu build
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -51,4 +51,4 @@ jobs:
           VPS_PORT: ${{ vars.VPS_PORT || '22' }}
         run: |
           ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
-            "cd '$VPS_PATH' && git pull --ff-only origin main && docker compose up -d --build --remove-orphans --wait"
+            "cd '$VPS_PATH' && git pull --ff-only origin main && docker compose --profile vieneu up -d --build --remove-orphans --wait"
