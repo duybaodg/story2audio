@@ -39,7 +39,7 @@ def _heartbeat_loop() -> None:
         client.close()
 
 
-def _handle_shutdown(signum, frame):
+def _handle_shutdown(signum, _frame):
     global _shutdown
     _shutdown = True
     logger.info("Received signal %s; stopping after current job", signum)
@@ -79,7 +79,6 @@ def _process_job(raw_job: str, client) -> None:
         language=job.get("language", "vi"),
         chunks=job.get("chunks"),
         audio_quality=job.get("audio_quality", "standard"),
-        model=job.get("model"),
     )
     clear_vieneu_cancel_sync(cache_id, client)
     logger.info("Finished VieNeu job %s", cache_id)

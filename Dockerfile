@@ -1,38 +1,37 @@
-FROM python:3.13-slim
+FROM python:3.13-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install build dependencies, ffmpeg for audio conversion, tesseract for OCR, and poppler for PDF->image
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     cmake \
-    ffmpeg \
-    tesseract-ocr \
-    tesseract-ocr-vie \
-    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Cài uv để quản lý dependency từ pyproject.toml
 RUN pip install --no-cache-dir --upgrade pip uv
 
-# Copy file dependency trước để tối ưu layer cache
 COPY pyproject.toml README.md ./
 COPY uv.lock ./
-
-# Install exactly the dependency versions verified by CI.
 RUN uv sync --locked --no-dev
 
-# Copy source code
+
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:${PATH}"
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/.venv /app/.venv
 COPY . .
-
-# Đảm bảo thư mục cache và documents tồn tại
-RUN mkdir -p /app/audio_cache /app/models/vieneu/assets /app/documents/uploads /app/documents/assembled /app/documents/sessions
-
-ENV PATH="/app/.venv/bin:${PATH}"
+RUN mkdir -p /app/audio_cache /app/models/vieneu/assets /app/documents/uploads /app/documents/assembled
 
 EXPOSE 8000
 

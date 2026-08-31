@@ -1,6 +1,6 @@
 # models/document.py
 from datetime import datetime, timedelta, UTC
-from typing import Optional, List, Dict, Set, Any
+from typing import Optional, Dict, Set, Any
 from pydantic import BaseModel, Field
 from enum import Enum
 import uuid
@@ -18,7 +18,6 @@ class FileType(str, Enum):
 class ExtractionMethod(str, Enum):
     BASIC = "basic"
     ADVANCED = "advanced"
-    OCR = "ocr"
 
 class UploadSession(BaseModel):
     upload_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -60,6 +59,5 @@ class Chapter(BaseModel):
     estimated_audio_duration: float = 0.0
     quality_score: float = 1.0
     needs_ocr: bool = False
-    ocr_processed: bool = False
     extraction_method: ExtractionMethod = ExtractionMethod.BASIC
     language: str = "en"

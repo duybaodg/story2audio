@@ -15,7 +15,7 @@ Place sample PDF and EPUB files in this directory for integration testing.
 - **PDF with images/diagrams**: For OCR recommendation testing
 
 ### Edge Cases
-- **Scanned PDF**: For OCR testing (future phase)
+- **Scanned PDF**: For poor-text-quality detection
 - **PDF with mixed content**: Text + images
 - **EPUB with embedded fonts**: For rendering validation
 - **Very large document (100+ MB)**: For testing file size limits
@@ -32,7 +32,7 @@ Place sample PDF and EPUB files in this directory for integration testing.
 Use descriptive names to help identify test cases:
 - `small-basic.pdf` - Simple PDF document
 - `medium-chapters.epub` - EPUB with multiple chapters
-- `large-scanned.pdf` - Scanned document for OCR testing
+- `large-scanned.pdf` - Scanned document for quality detection
 - `complex-formatting.pdf` - Document with complex layout
 
 ## Notes

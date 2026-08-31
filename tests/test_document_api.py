@@ -1,11 +1,9 @@
 # tests/test_document_api.py
-import pytest
-import asyncio
-import hashlib
 import os
 import sys
 import tempfile
 import time
+from pathlib import Path
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -88,6 +86,21 @@ def test_health_check():
     data = response.json()
     assert data["status"] == "healthy"
     assert "active_sessions" in data
+
+
+def test_tts_delete_requires_cache_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+    owner = TestClient(app)
+    intruder = TestClient(app)
+    owner.get("/")
+    intruder.get("/")
+
+    cache_id = "a" * 32
+    main.save_cache_meta(cache_id, {"status": "completed", "owners": [owner.cookies["story2audio_session"]]})
+    Path(main.get_audio_path(cache_id)).write_bytes(b"audio")
+
+    assert intruder.delete(f"/tts/file/{cache_id}").status_code == 404
+    assert owner.delete(f"/tts/file/{cache_id}").status_code == 200
 
 def test_stream_extraction():
     """Test streaming extraction endpoint returns correct content type for non-existent document."""
@@ -178,7 +191,6 @@ def test_vieneu_start_enqueues_job_without_in_process_generation(monkeypatch):
             "voice": "vieneu:default",
             "engine": "vieneu",
             "language": "vi",
-            "model": "v3_turbo_int8",
         },
     )
 
@@ -191,7 +203,7 @@ def test_vieneu_start_enqueues_job_without_in_process_generation(monkeypatch):
         assert len(enqueued) == 1
         assert enqueued[0]["cache_id"] == cache_id
         assert enqueued[0]["engine"] == "vieneu"
-        assert enqueued[0]["model"] == "v3_turbo_int8"
+        assert "model" not in enqueued[0]
         assert data["estimated_seconds"] > 0
         assert cache_id not in main.generation_status
 
@@ -206,27 +218,11 @@ def test_vieneu_start_enqueues_job_without_in_process_generation(monkeypatch):
         main.cleanup_incomplete_cache(cache_id)
 
 
-def test_tts_rejects_unknown_vieneu_model():
-    response = client.post(
-        "/tts/start",
-        json={
-            "text": "Xin chào",
-            "voice": "vieneu:default",
-            "engine": "vieneu",
-            "language": "vi",
-            "model": "unknown",
-        },
-    )
-
-    assert response.status_code == 422
-
-
-def test_ui_offers_both_vieneu_models_and_all_voices():
+def test_ui_uses_fixed_vieneu_model_and_offers_all_voices():
     html = client.get("/").text
     assert "Tối đa 5.000 từ" in html
     assert "hàng đợi Redis" in html
-    assert 'value="v3_turbo"' in html
-    assert 'value="v3_turbo_int8"' in html
+    assert 'id="model"' not in html
 
     from vieneu_model import get_preset_voices_from_file
 
@@ -240,8 +236,7 @@ def test_ui_offers_both_vieneu_models_and_all_voices():
 
 
 def test_conversion_estimate_refines_with_progress(monkeypatch):
-    assert main.estimate_conversion_seconds("x" * 100, "vieneu", "v3_turbo_int8") \
-        < main.estimate_conversion_seconds("x" * 100, "vieneu", "v3_turbo")
+    assert main.estimate_conversion_seconds("x" * 200, "vieneu") > 0
 
     monkeypatch.setattr(main.time, "time", lambda: 130.0)
     status = main.add_remaining_time({

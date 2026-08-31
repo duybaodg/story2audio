@@ -44,9 +44,9 @@ Azure Files
 Confirm local code is deployable:
 
 ```bash
-python -m py_compile main.py tts_queue.py tts_worker.py
-pytest
-docker compose config --quiet
+uv run python -m py_compile main.py tts_queue.py tts_worker.py
+uv run pytest
+docker compose --profile vieneu config --quiet
 ```
 
 Choose release version:
@@ -277,8 +277,9 @@ az containerapp update \
     MAX_WORKERS=1 \
     VIENEU_INIT_IN_WEB=false \
     VIENEU_MAX_WORKERS=1 \
-    VIENEU_MODE=v3_turbo \
     VIENEU_SAMPLE_RATE=48000 \
+    VIENEU_CHUNK_SIZE=500 \
+    VIENEU_WARMUP_ITERATIONS=1 \
     TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS=300 \
     REDIS_URL=secretref:redis-url \
     HF_TOKEN=secretref:hf-token
@@ -371,8 +372,9 @@ az containerapp update \
     JOBS_DIR=/app/jobs \
     MAX_WORKERS=1 \
     VIENEU_MAX_WORKERS=1 \
-    VIENEU_MODE=v3_turbo \
     VIENEU_SAMPLE_RATE=48000 \
+    VIENEU_CHUNK_SIZE=500 \
+    VIENEU_WARMUP_ITERATIONS=1 \
     REDIS_URL=secretref:redis-url \
     HF_TOKEN=secretref:hf-token
 ```

@@ -2,10 +2,8 @@
 import pytest
 import os
 import sys
-import json
 import time
 from datetime import datetime, UTC
-from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -26,7 +24,7 @@ from job_queue import (
     _ensure_jobs_dir,
 )
 from file_processor import active_documents
-from models import Document, FileType, DocumentStatus
+from models import Document, FileType
 
 
 @pytest.fixture(autouse=True)
@@ -166,6 +164,22 @@ def test_recover_orphan_jobs():
     assert job is not None
     assert job.status == JobStatus.FAILED
     assert "crashed" in job.error.lower()
+
+
+def test_worker_honors_cancellation(monkeypatch):
+    job = ExtractionJob(
+        job_id="cancel-running",
+        document_id="doc-1",
+        status=JobStatus.PENDING,
+        created_at=datetime.now(UTC),
+    )
+    _save_job(job)
+    job_queue._cancelled_jobs.add(job.job_id)
+    monkeypatch.setattr(job_queue, "_run_extraction_blocking", lambda *args: args[-1](0.5, "working"))
+
+    job_queue._job_worker(job.job_id, job.document_id, "/tmp/test.pdf", "pdf")
+
+    assert get_job_status(job.job_id).error == "Cancelled by user"
 
 
 @pytest.mark.asyncio

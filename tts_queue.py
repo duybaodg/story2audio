@@ -18,6 +18,7 @@ TTS_CANCEL_TTL_SECONDS = int(os.getenv("TTS_CANCEL_TTL_SECONDS", "86400"))
 TTS_MAX_QUEUE_SIZE = int(os.getenv("TTS_MAX_QUEUE_SIZE", "20"))
 TTS_WORKER_HEARTBEAT_KEY = os.getenv("TTS_WORKER_HEARTBEAT_KEY", "ebook2audio:tts:vieneu:worker")
 TTS_WORKER_HEARTBEAT_TTL_SECONDS = int(os.getenv("TTS_WORKER_HEARTBEAT_TTL_SECONDS", "30"))
+_async_client = None
 
 
 class TTSQueueError(RuntimeError):
@@ -48,8 +49,18 @@ def get_sync_client():
 
 
 async def get_async_client():
+    global _async_client
     _require_redis()
-    return async_redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+    if _async_client is None:
+        _async_client = async_redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+    return _async_client
+
+
+async def close_async_client() -> None:
+    global _async_client
+    if _async_client is not None:
+        await _async_client.aclose()
+        _async_client = None
 
 
 async def enqueue_vieneu_tts_job(job: Dict[str, Any]) -> None:
@@ -61,8 +72,6 @@ async def enqueue_vieneu_tts_job(job: Dict[str, Any]) -> None:
         await client.lpush(TTS_QUEUE_KEY, _serialize_job(job))
     except Exception as exc:
         raise TTSQueueError(f"Unable to enqueue VieNeu TTS job: {exc}") from exc
-    finally:
-        await client.aclose()
 
 
 async def redis_is_ready() -> bool:
@@ -71,8 +80,6 @@ async def redis_is_ready() -> bool:
         return bool(await client.ping())
     except Exception:
         return False
-    finally:
-        await client.aclose()
 
 
 async def vieneu_worker_is_ready() -> bool:
@@ -81,8 +88,6 @@ async def vieneu_worker_is_ready() -> bool:
         return bool(await client.get(TTS_WORKER_HEARTBEAT_KEY))
     except Exception:
         return False
-    finally:
-        await client.aclose()
 
 
 async def request_vieneu_cancel(cache_id: str) -> None:
@@ -91,8 +96,6 @@ async def request_vieneu_cancel(cache_id: str) -> None:
         await client.setex(f"{TTS_CANCEL_PREFIX}{cache_id}", TTS_CANCEL_TTL_SECONDS, "1")
     except Exception as exc:
         raise TTSQueueError(f"Unable to request VieNeu cancellation: {exc}") from exc
-    finally:
-        await client.aclose()
 
 
 def request_vieneu_cancel_sync(cache_id: str) -> None:

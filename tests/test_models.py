@@ -1,5 +1,4 @@
 # tests/test_models.py
-import pytest
 from datetime import datetime, timedelta, UTC
 from models import UploadSession, Document, Chapter, DocumentStatus, FileType
 
@@ -39,5 +38,5 @@ def test_chapter_creation():
     )
     assert chapter.chapter_id
     assert chapter.quality_score == 1.0
-    assert chapter.needs_ocr == False
+    assert not chapter.needs_ocr
     assert chapter.word_count == 0

@@ -12,10 +12,9 @@ import os
 import io
 import wave
 import logging
-from typing import Optional, Literal
+from typing import Literal
 import numpy as np
 from pydub import AudioSegment
-from pydub.silence import detect_nonsilent
 
 logger = logging.getLogger("ebook2audio")
 
@@ -422,20 +421,6 @@ def process_vienneu_audio(
         file_extension = "mp3"
 
     return audio_bytes, file_extension
-
-
-# Keep old name as alias for backward compatibility
-process_vieneu_audio = process_vienneu_audio
-
-
-def get_file_extension(audio_quality: AudioQuality) -> str:
-    """Get file extension for given audio quality setting."""
-    return "wav" if audio_quality == "lossless" else "mp3"
-
-
-def get_bitrate_for_quality(audio_quality: AudioQuality) -> Optional[str]:
-    """Get bitrate string for audio quality setting."""
-    return BITRATE_MAP.get(audio_quality)
 
 
 def encode_mp3_cbr(

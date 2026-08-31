@@ -1684,8 +1684,6 @@
         const engineSel = document.getElementById('engine');
         const voiceGroup = document.getElementById('voiceGroup');
         const engineIndicator = document.getElementById('engineIndicator');
-        const modelGroup = document.getElementById('modelGroup');
-        const modelSel = document.getElementById('model');
         const speedSelect = document.getElementById('speedSelect');
         const convertBtn = document.getElementById('convertBtn');
 
@@ -1780,7 +1778,6 @@
             if (audioQualityGroup) {
                 audioQualityGroup.style.display = selectedEngine === 'vieneu' ? '' : 'none';
             }
-            modelGroup.style.display = selectedEngine === 'vieneu' ? '' : 'none';
         }
 
         function updateEngineIndicator(engine) {
@@ -2268,7 +2265,6 @@
             // Add audio quality for VieNeu engine
             if (engine === 'vieneu') {
                 body.audio_quality = document.getElementById('audioQuality').value;
-                body.model = modelSel.value;
             }
 
             let data;
