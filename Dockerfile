@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip uv
+RUN pip install --no-cache-dir uv==0.12.5
 
 COPY pyproject.toml README.md ./
 COPY uv.lock ./
@@ -27,12 +27,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --create-home app
 
 COPY --from=builder /app/.venv /app/.venv
-COPY . .
-RUN mkdir -p /app/audio_cache /app/models/vieneu/assets /app/documents/uploads /app/documents/assembled
+COPY --chown=app:app *.py ./
+COPY --chown=app:app static ./static
+COPY --chown=app:app templates ./templates
+COPY --chown=app:app models ./models
+RUN mkdir -p /app/audio_cache /app/documents/uploads /app/documents/assembled /app/jobs /home/app/.cache/huggingface \
+    && chown -R app:app /app/audio_cache /app/documents /app/jobs /home/app/.cache
+
+USER app
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD ["/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
 
 CMD ["/app/.venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,20 +1,20 @@
 # Ebook2Audio 🎧
 
-**Miễn phí · Không giới hạn · Không cần đăng ký**
+**Miễn phí · Không cần đăng ký**
 
-Ebook2Audio chuyển đổi văn bản, truyện, bài báo... thành âm thanh tự nhiên với **phụ đề trực tiếp**. Bạn có thể dán bất kỳ nội dung nào — từ một câu ngắn đến cả cuốn tiểu thuyết — và bắt đầu nghe ngay lập tức.
+Ebook2Audio chuyển đổi văn bản, truyện, bài báo... thành âm thanh tự nhiên. Edge-TTS hỗ trợ **phụ đề trực tiếp**; mỗi yêu cầu nhận tối đa 100.000 ký tự theo cấu hình mặc định.
 
 > 🌐 **Demo trực tiếp:** [ebook2audio.hoctuthien.com](https://ebook2audio.hoctuthien.com)
 
 ## ✨ Tại sao nên dùng Ebook2Audio?
 
 - 🆓 **Hoàn toàn miễn phí** — Sử dụng công nghệ Edge TTS của Microsoft, không tốn phí, không cần API key.
-- 📝 **Không giới hạn độ dài văn bản** — Dán một câu hay cả cuốn tiểu thuyết đều được. Văn bản dài sẽ được chia nhỏ tự động.
+- 📝 **Hỗ trợ văn bản dài** — Nội dung được tự động chia nhỏ; giới hạn mặc định là 100.000 ký tự mỗi yêu cầu (`TTS_MAX_TEXT_LENGTH`).
 - 🎧 **Nghe ngay lập tức** — Âm thanh được phát theo thời gian thực (live streaming) ngay khi đang tạo, không cần chờ hoàn tất.
-- 📜 **Phụ đề trực tiếp (Live Subtitles)** — Phụ đề hiện song song với audio, cập nhật từng câu theo thời gian thực. Hỗ trợ tải về định dạng SRT và WebVTT.
+- 📜 **Phụ đề trực tiếp (Live Subtitles)** — Edge-TTS hiển thị phụ đề theo thời gian thực và hỗ trợ tải SRT/WebVTT. VieNeu và gTTS không hỗ trợ phụ đề.
 - 🌍 **Đa ngôn ngữ** — Hỗ trợ 7 ngôn ngữ với giọng đọc bản địa chất lượng cao: Tiếng Việt, Anh, Nhật, Trung, Hàn, Pháp, Đức.
 - 🎙️ **Nhiều giọng đọc** — Hàng chục giọng đọc Neural tự nhiên cho mỗi ngôn ngữ (nam, nữ, trẻ em...).
-- 💾 **Tải về dễ dàng** — Tải file MP3, file phụ đề SRT và WebVTT chỉ bằng một cú click.
+- 💾 **Tải về dễ dàng** — Tải audio và, với Edge-TTS, file phụ đề SRT/WebVTT chỉ bằng một cú click.
 - ⚡ **Lưu cache thông minh** — Văn bản đã chuyển đổi sẽ được lưu lại, lần sau mở lại là phát ngay không cần tạo lại.
 
 ## 📄 Document Upload
@@ -24,8 +24,7 @@ Upload PDF and EPUB files to convert ebooks and documents into audio:
 - **Chunked Upload:** Supports files up to 50MB with 5MB chunked transfer
 - **Smart Extraction:** Automatic chapter detection and structure analysis
 - **Quality Assessment:** Text quality scoring with OCR recommendations
-- **Session Storage:** Auto-cleanup after 24 hours
-- **Large File Support:** Optimized for 200+ page documents
+- **Session Storage:** Auto-cleanup after 12 hours by default
 
 ### Upload Workflow
 
@@ -33,7 +32,7 @@ Upload PDF and EPUB files to convert ebooks and documents into audio:
 2. Preview chapter structure in real-time
 3. Select specific chapters or entire document
 4. Convert selected content to audio
-5. Download audio with synchronized subtitles
+5. Download audio and, when using Edge-TTS, synchronized subtitles
 
 ### API Endpoints
 
@@ -57,41 +56,55 @@ GET /document/{id}/structure
 ### Usage Example
 
 ```python
+import hashlib
+import os
 import requests
 
-# Initiate upload
-response = requests.post("http://localhost:8000/document/upload/initiate", json={
-    "filename": "ebook.pdf",
-    "file_size": 15728640,
-    "checksum": "abc123..."
-})
-upload_id = response.json()["upload_id"]
+session = requests.Session()
+filename = "ebook.pdf"
+chunk_size = 5 * 1024 * 1024
 
-# Upload chunks (5MB each)
-with open("ebook.pdf", "rb") as f:
+with open(filename, "rb") as source:
+    checksum = hashlib.md5(source.read()).hexdigest()
+
+# Initiate upload
+response = session.post("http://localhost:8000/document/upload/initiate", data={
+    "filename": filename,
+    "file_size": os.path.getsize(filename),
+    "checksum": checksum,
+})
+response.raise_for_status()
+upload_id = response.json()["upload_id"]
+chunk_size = response.json()["chunk_size"]
+
+# Upload chunks (5 MB by default)
+with open(filename, "rb") as f:
     chunk_number = 0
     while True:
-        chunk = f.read(5242880)  # 5MB
+        chunk = f.read(chunk_size)
         if not chunk:
             break
-        requests.post("http://localhost:8000/document/upload/chunk", 
+        response = session.post("http://localhost:8000/document/upload/chunk",
             data={"upload_id": upload_id, "chunk_number": chunk_number},
             files={"chunk": chunk})
+        response.raise_for_status()
         chunk_number += 1
 
 # Complete upload
-response = requests.post("http://localhost:8000/document/upload/complete",
+response = session.post("http://localhost:8000/document/upload/complete",
     data={"upload_id": upload_id})
+response.raise_for_status()
 document_id = response.json()["document_id"]
 
 # Stream extraction progress
-response = requests.get(f"http://localhost:8000/document/{document_id}/extract/stream", stream=True)
+response = session.get(f"http://localhost:8000/document/{document_id}/extract/stream", stream=True)
+response.raise_for_status()
 for line in response.iter_lines():
     if line:
         print(line.decode())
 ```
 - 🐳 **Dễ dàng tự host** — Hỗ trợ Docker, Docker Compose, triển khai trên Coolify, Railway, VPS...
-- 📄 **Upload tài liệu** — Tải lên PDF và EPUB để chuyển đổi sách và tài liệu thành audio có phụ đề.
+- 📄 **Upload tài liệu** — Tải PDF và EPUB, chọn chương rồi chuyển đổi sang audio.
 
 ## 🚀 Sử dụng
 
@@ -169,9 +182,10 @@ Tạo file `.env` tại thư mục gốc (xem `.env.example`) để cấu hình:
 
 ```env
 PROXY=http://user:password@proxy-host:8080   # Proxy nếu cần
-HOST=0.0.0.0
-PORT=8000
-ENABLE_DEBUG_TTS=false                          # Bật debug trên production
+ENABLE_DEBUG_TTS=false                       # Chỉ bật để chẩn đoán
+TTS_MAX_TEXT_LENGTH=100000
+UPLOAD_SESSION_EXPIRY_HOURS=12
+AUDIO_CACHE_RETENTION_HOURS=12
 ```
 
 VieNeu dùng duy nhất **VieNeu-TTS v3 Turbo INT8** để giảm RAM, dung lượng model và thời gian CPU. Model không thể đổi qua request hay biến môi trường:

@@ -119,6 +119,23 @@ class TestVieneuSequentialProcessing:
             with pytest.raises(RuntimeError, match="Chunk processing failed"):
                 main.vieneu_tts_to_audio_sync("chunk_1", "vieneu:default")
 
+    def test_final_mp3_is_remuxed_atomically(self, tmp_path, monkeypatch):
+        import main
+
+        audio_path = tmp_path / "audio.mp3"
+        audio_path.write_bytes(b"appended chunks")
+
+        def fake_run(command, **kwargs):
+            assert command[-1] == f"{audio_path}.finalizing"
+            assert command[command.index("-c:a") + 1] == "copy"
+            (tmp_path / "audio.mp3.finalizing").write_bytes(b"final mp3")
+
+        monkeypatch.setattr(main.subprocess, "run", fake_run)
+        main.finalize_mp3(str(audio_path))
+
+        assert audio_path.read_bytes() == b"final mp3"
+        assert not (tmp_path / "audio.mp3.finalizing").exists()
+
 
 class TestVieneuIntegration:
     """Integration tests for VieNeu TTS."""

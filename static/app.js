@@ -601,6 +601,7 @@
                 const textInput = document.getElementById('textInput');
                 if (textInput) {
                     textInput.value = data.text || '';
+                    updateWordCount();
                 }
 
                 // Show source indicator
@@ -1644,6 +1645,7 @@
             // Populate textarea with null check
             if (textInput) {
                 textInput.value = data.text;
+                updateWordCount();
             }
 
             // Add source indicator
@@ -1686,6 +1688,9 @@
         const engineIndicator = document.getElementById('engineIndicator');
         const speedSelect = document.getElementById('speedSelect');
         const convertBtn = document.getElementById('convertBtn');
+        const wordCount = document.getElementById('wordCount');
+        const VIENEU_MAX_WORDS = 5000;
+        let vieneuLimitNoticeShown = false;
 
         const statusWrap = document.getElementById('statusWrap');
         const statusLabel = document.getElementById('statusLabel');
@@ -1705,6 +1710,38 @@
 
         function setSampleText(lang) {
             textInput.value = SAMPLE_TEXT[lang] || '';
+            updateWordCount();
+        }
+
+        function countWords(text) {
+            const value = text.trim();
+            return value ? value.split(/\s+/).length : 0;
+        }
+
+        function updateWordCount() {
+            const count = countWords(textInput.value);
+            const isVieneu = engineSel.value === 'vieneu';
+            const overBy = count - VIENEU_MAX_WORDS;
+
+            wordCount.classList.toggle('limit-reached', isVieneu && count === VIENEU_MAX_WORDS);
+            wordCount.classList.toggle('limit-exceeded', isVieneu && overBy > 0);
+            wordCount.textContent = isVieneu
+                ? `${count.toLocaleString('vi-VN')} / ${VIENEU_MAX_WORDS.toLocaleString('vi-VN')} từ${overBy > 0 ? ` · Vượt ${overBy.toLocaleString('vi-VN')} từ` : count === VIENEU_MAX_WORDS ? ' · Đã đạt giới hạn' : ''}`
+                : `${count.toLocaleString('vi-VN')} từ`;
+
+            if (isVieneu && count >= VIENEU_MAX_WORDS && !vieneuLimitNoticeShown) {
+                showToast({
+                    variant: overBy > 0 ? 'error' : 'warning',
+                    title: overBy > 0 ? 'Đã Vượt Giới Hạn VieNeu' : 'Đã Đạt Giới Hạn VieNeu',
+                    message: overBy > 0
+                        ? `Vui lòng bỏ bớt ít nhất ${overBy.toLocaleString('vi-VN')} từ trước khi chuyển đổi.`
+                        : 'Nội dung đã đủ 5.000 từ. Thêm từ mới sẽ vượt giới hạn.',
+                    duration: 5000
+                });
+                vieneuLimitNoticeShown = true;
+            } else if (!isVieneu || count < VIENEU_MAX_WORDS) {
+                vieneuLimitNoticeShown = false;
+            }
         }
 
         function formatBytes(bytes) {
@@ -2253,6 +2290,18 @@
                 return;
             }
 
+            const words = countWords(text);
+            if (engine === 'vieneu' && words > VIENEU_MAX_WORDS) {
+                const overBy = words - VIENEU_MAX_WORDS;
+                showModal({
+                    variant: 'warning',
+                    title: 'Vượt Giới Hạn VieNeu',
+                    message: `Nội dung có ${words.toLocaleString('vi-VN')} từ, vượt giới hạn 5.000 từ ${overBy.toLocaleString('vi-VN')} từ. Vui lòng rút ngắn nội dung rồi thử lại.`,
+                    actions: [{ label: 'OK', primary: true }]
+                });
+                return;
+            }
+
             resetUI();
             convertBtn.disabled = true;
             subtitleSupported = engine === 'edge';
@@ -2411,7 +2460,10 @@
             }
             updateLanguageButtons();
             updateVoiceDropdown();
+            updateWordCount();
         });
+
+        textInput.addEventListener('input', updateWordCount);
 
         (async () => {
             try {

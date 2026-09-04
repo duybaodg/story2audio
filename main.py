@@ -12,6 +12,7 @@ import unicodedata
 import threading
 import traceback
 import secrets
+import subprocess
 from typing import List, Dict, AsyncGenerator, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, status
@@ -568,6 +569,13 @@ def is_cache_valid(cache_id: str, require_subtitles: bool = False) -> bool:
     if actual_size <= 0 or actual_size != expected_size:
         return False
 
+    if (
+        meta.get("engine") == "vieneu"
+        and int(meta.get("total") or 0) > 1
+        and meta.get("audio_container_version") != 2
+    ):
+        return False
+
     if require_subtitles and meta.get("engine") == "edge":
         if not (
             os.path.exists(get_srt_path(cache_id))
@@ -641,6 +649,26 @@ def strip_id3v2(data: bytes) -> bytes:
         )
         return data[size + 10:]
     return data
+
+
+def finalize_mp3(audio_path: str) -> None:
+    """Rewrite appended MP3 chunks as one stream with correct duration metadata."""
+    output_path = f"{audio_path}.finalizing"
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-i", audio_path, "-map", "0:a:0", "-c:a", "copy",
+                "-write_xing", "1", "-f", "mp3", output_path,
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        os.replace(output_path, audio_path)
+    except Exception:
+        remove_if_exists(output_path)
+        raise
 
 
 def normalize_text(text: str) -> str:
@@ -1701,6 +1729,9 @@ async def generate_chunks(
                     },
                 )
 
+            if engine == "vieneu" and audio_quality != "lossless":
+                finalize_mp3(audio_path)
+
             final_size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
             if final_size <= 0:
                 raise RuntimeError("Generated audio file is empty")
@@ -1730,6 +1761,7 @@ async def generate_chunks(
                     "subtitle_ready": subtitle_ready,
                     "subtitle_cues": len(cues_all),
                     "duration_seconds": round(global_audio_sec, 3),
+                    "audio_container_version": 2 if engine == "vieneu" else None,
                 },
             )
             generation_status.pop(cache_id, None)

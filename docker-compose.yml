@@ -14,6 +14,7 @@ services:
       retries: 3
 
   app:
+    image: "ebook2audio:${APP_VERSION:-v4.0.0}"
     build:
       context: .
       dockerfile: Dockerfile
@@ -57,7 +58,7 @@ services:
       - ebook2audio_cache:/app/audio_cache
       - ebook2audio_documents:/app/documents
       - ebook2audio_jobs:/app/jobs
-      - ebook2audio_models:/root/.cache/huggingface  # VieNeu model cache (1-2GB)
+      - ebook2audio_models:/home/app/.cache/huggingface  # VieNeu model cache (1-2GB)
     # Resource limits (optional - uncomment for production)
     # deploy:
     #   resources:
@@ -76,9 +77,7 @@ services:
 
   vieneu-worker:
     profiles: ["vieneu"]
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: "ebook2audio:${APP_VERSION:-v4.0.0}"
     container_name: ebook2audio_vieneu_worker
     restart: unless-stopped
     command: ["/app/.venv/bin/python", "tts_worker.py"]
@@ -104,7 +103,7 @@ services:
       - ebook2audio_cache:/app/audio_cache
       - ebook2audio_documents:/app/documents
       - ebook2audio_jobs:/app/jobs
-      - ebook2audio_models:/root/.cache/huggingface
+      - ebook2audio_models:/home/app/.cache/huggingface
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/vieneu-worker-ready"]
       interval: 15s

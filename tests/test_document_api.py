@@ -221,7 +221,8 @@ def test_vieneu_start_enqueues_job_without_in_process_generation(monkeypatch):
 def test_ui_uses_fixed_vieneu_model_and_offers_all_voices():
     html = client.get("/").text
     assert "Tối đa 5.000 từ" in html
-    assert "hàng đợi Redis" in html
+    assert "hàng đợi Redis" not in html
+    assert 'id="wordCount"' in html
     assert 'id="model"' not in html
 
     from vieneu_model import get_preset_voices_from_file
