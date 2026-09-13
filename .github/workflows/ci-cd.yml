@@ -16,10 +16,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: true
+          version: "0.12.5"
       - run: uv sync --locked
       - run: uv run pytest
       - run: uv run python -m py_compile main.py tts_queue.py tts_worker.py
@@ -38,6 +39,8 @@ jobs:
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
+          : "${SSH_KEY:?VPS_SSH_KEY secret is required}"
+          : "${KNOWN_HOSTS:?VPS_KNOWN_HOSTS secret is required}"
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
@@ -49,6 +52,15 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PATH: ${{ vars.VPS_PATH }}
           VPS_PORT: ${{ vars.VPS_PORT || '22' }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
-          ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
-            "cd '$VPS_PATH' && git pull --ff-only origin main && docker compose --profile vieneu up -d --build --remove-orphans --wait"
+          : "${VPS_HOST:?VPS_HOST secret is required}"
+          : "${VPS_USER:?VPS_USER secret is required}"
+          : "${VPS_PATH:?VPS_PATH variable is required}"
+          printf -v deploy_command \
+            'cd %q && test -f .env && git fetch --depth=1 origin %q && git checkout --detach %q && docker compose --profile vieneu up -d --build --remove-orphans --wait' \
+            "$VPS_PATH" "$DEPLOY_SHA" "$DEPLOY_SHA"
+          ssh -i ~/.ssh/id_ed25519 -p "$VPS_PORT" \
+            -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            "$VPS_USER@$VPS_HOST" "$deploy_command"
