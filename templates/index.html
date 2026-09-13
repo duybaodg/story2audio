@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Story to Audio + Live Subtitle</title>
+    <title>Ebook to Audio + Live Subtitle</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
     <link rel="stylesheet" href="/static/style.css" />
 </head>
@@ -11,7 +11,7 @@
     <div class="app-shell">
         <header class="app-topbar">
             <div>
-                <h1>Ebook2Audio</h1>
+                <h1>Ebook to Audio</h1>
                 <div class="version">Phiên bản __APP_VERSION__</div>
             </div>
             <div class="topbar-status">
@@ -218,6 +218,34 @@
                     <a id="downloadVttBtn" class="download-btn gray" download="subtitle.vtt">Tải VTT</a>
                     <button id="clearCacheBtn" class="clear-cache-btn">Xóa audio</button>
                 </div>
+            </div>
+        </section>
+
+        <section class="repository-section" aria-labelledby="repositoryHeading">
+            <div class="repository-heading">
+                <span class="repository-kicker">Mã nguồn mở</span>
+                <h2 id="repositoryHeading">Các repository đóng góp cho dự án</h2>
+                <p>Ebook to Audio được xây dựng và phát triển từ ba nguồn mã mở dưới đây.</p>
+            </div>
+            <div class="repository-grid">
+                <a class="repository-link" href="https://github.com/duybaodg/story2audio" target="_blank" rel="noopener noreferrer">
+                    <span class="repository-label">Dự án hiện tại</span>
+                    <strong>duybaodg/story2audio</strong>
+                    <span>Phiên bản Ebook to Audio đang được phát triển.</span>
+                    <span class="repository-action">Xem repository <span aria-hidden="true">↗</span></span>
+                </a>
+                <a class="repository-link" href="https://github.com/dvchd/story2audio" target="_blank" rel="noopener noreferrer">
+                    <span class="repository-label">Dự án gốc</span>
+                    <strong>dvchd/story2audio</strong>
+                    <span>Nền tảng mã nguồn ban đầu của ứng dụng.</span>
+                    <span class="repository-action">Xem repository <span aria-hidden="true">↗</span></span>
+                </a>
+                <a class="repository-link" href="https://github.com/pnnbao97/VieNeu-TTS" target="_blank" rel="noopener noreferrer">
+                    <span class="repository-label">Vietnamese TTS</span>
+                    <strong>pnnbao97/VieNeu-TTS</strong>
+                    <span>Công nghệ tổng hợp giọng nói tiếng Việt VieNeu.</span>
+                    <span class="repository-action">Xem repository <span aria-hidden="true">↗</span></span>
+                </a>
             </div>
         </section>
     </div>

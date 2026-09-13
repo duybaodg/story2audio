@@ -1,6 +1,6 @@
-# Ebook2Audio 🎧
+# Ebook to Audio 🎧
 
-Ebook2Audio is a FastAPI application that converts text, PDF, and EPUB content into audio. It supports Edge TTS, gTTS, and a dedicated VieNeu worker for Vietnamese speech generation.
+Ebook to Audio is a FastAPI application that converts text, PDF, and EPUB content into audio. It supports Edge TTS, gTTS, and a dedicated VieNeu worker for Vietnamese speech generation.
 
 ## Features
 

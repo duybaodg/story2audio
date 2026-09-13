@@ -1,6 +1,6 @@
 # Hướng dẫn Đóng góp (Contributing Guidelines)
 
-Cảm ơn bạn đã quan tâm và muốn đóng góp cho dự án **Ebook2Audio**! Chúng tôi hoan nghênh mọi đóng góp từ cộng đồng, từ việc báo lỗi (bug report), đề xuất tính năng mới (feature request) cho đến việc gửi Pull Request (PR) để cải thiện mã nguồn.
+Cảm ơn bạn đã quan tâm và muốn đóng góp cho dự án **Ebook to Audio**! Chúng tôi hoan nghênh mọi đóng góp từ cộng đồng, từ việc báo lỗi (bug report), đề xuất tính năng mới (feature request) cho đến việc gửi Pull Request (PR) để cải thiện mã nguồn.
 
 Dưới đây là một số hướng dẫn để quá trình đóng góp diễn ra suôn sẻ và hiệu quả.
 
@@ -18,7 +18,7 @@ Nếu bạn phát hiện lỗi trong quá trình sử dụng, vui lòng kiểm t
 
 ## 💡 Đề xuất Tính năng (Suggesting Enhancements)
 
-Chúng tôi luôn muốn làm cho Ebook2Audio tốt hơn. Để đề xuất tính năng mới, hãy tạo một Issue và mô tả:
+Chúng tôi luôn muốn làm cho Ebook to Audio tốt hơn. Để đề xuất tính năng mới, hãy tạo một Issue và mô tả:
 
 1. **Vấn đề bạn đang gặp phải:** Tại sao tính năng này lại cần thiết?
 2. **Giải pháp đề xuất:** Bạn muốn tính năng hoạt động như thế nào?
@@ -67,4 +67,4 @@ Chúng tôi luôn muốn làm cho Ebook2Audio tốt hơn. Để đề xuất tí
 
 ---
 
-Cảm ơn bạn đã dành thời gian và công sức để cải thiện Ebook2Audio! 🚀
+Cảm ơn bạn đã dành thời gian và công sức để cải thiện Ebook to Audio! 🚀

@@ -90,7 +90,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Story to Audio + Live Subtitles API")
+app = FastAPI(title="Ebook to Audio + Live Subtitles API")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(document_router)
 
