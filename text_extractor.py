@@ -5,12 +5,48 @@ from typing import AsyncGenerator, List, Callable, Optional, Dict
 from models import Chapter, ExtractionMethod
 import PyPDF2
 import pdfplumber
+from file_processor import validate_epub_archive
 
 # Progress callback type: (progress: float, message: str) -> None
 ProgressCallback = Callable[[float, str], None]
+ChapterCallback = Callable[[Dict], None]
 
 # Configuration
 EXTRACTION_PAGE_BATCH = int(os.getenv("EXTRACTION_PAGE_BATCH", "20"))
+EXTRACTED_TEXT_MAX_CHARS = int(os.getenv("EXTRACTED_TEXT_MAX_CHARS", "2000000"))
+
+
+class ExtractionLimitError(RuntimeError):
+    pass
+
+
+def _append_extracted_text(parts: List[str], text: str, total_chars: int) -> int:
+    new_total = total_chars + len(text)
+    if new_total > EXTRACTED_TEXT_MAX_CHARS:
+        raise ExtractionLimitError(
+            f"Extracted text exceeds the {EXTRACTED_TEXT_MAX_CHARS}-character limit"
+        )
+    parts.append(text)
+    return new_total
+
+
+def _chapter_to_dict(chapter: Chapter) -> Dict:
+    return {
+        "chapter_id": chapter.chapter_id,
+        "document_id": chapter.document_id,
+        "chapter_number": chapter.chapter_number,
+        "title": chapter.title,
+        "start_page": chapter.start_page,
+        "end_page": chapter.end_page,
+        "text_preview": chapter.text_preview[:200] if chapter.text_preview else "",
+        "full_text": chapter.full_text or "",
+        "word_count": chapter.word_count,
+        "estimated_audio_duration": chapter.estimated_audio_duration,
+        "quality_score": chapter.quality_score,
+        "needs_ocr": chapter.needs_ocr,
+        "extraction_method": chapter.extraction_method.value,
+        "language": chapter.language,
+    }
 
 def _assess_text_quality(text: str) -> float:
     """
@@ -157,12 +193,15 @@ async def extract_pdf_text(document_id: str, file_path: str) -> AsyncGenerator[C
         with pdfplumber.open(file_path) as pdf:
             total_pages = len(pdf.pages)
             all_text = []
+            total_chars = 0
 
             for page_num, page in enumerate(pdf.pages):
                 try:
                     text = page.extract_text()
                     if text:
-                        all_text.append(text)
+                        total_chars = _append_extracted_text(all_text, text, total_chars)
+                except ExtractionLimitError:
+                    raise
                 except Exception:
                     all_text.append("")
 
@@ -178,6 +217,8 @@ async def extract_pdf_text(document_id: str, file_path: str) -> AsyncGenerator[C
 
             full_text = '\n\n'.join(all_text)
 
+    except ExtractionLimitError:
+        raise
     except Exception:
         # Fallback to PyPDF2
         try:
@@ -186,13 +227,16 @@ async def extract_pdf_text(document_id: str, file_path: str) -> AsyncGenerator[C
                 pdf_reader = PyPDF2.PdfReader(file)
                 total_pages = len(pdf_reader.pages)
                 all_text = []
+                total_chars = 0
 
                 for page_num in range(total_pages):
                     try:
                         page = pdf_reader.pages[page_num]
                         text = page.extract_text()
                         if text:
-                            all_text.append(text)
+                            total_chars = _append_extracted_text(all_text, text, total_chars)
+                    except ExtractionLimitError:
+                        raise
                     except Exception:
                         all_text.append("")
 
@@ -239,8 +283,10 @@ async def extract_epub_text(document_id: str, file_path: str) -> AsyncGenerator[
     try:
         from ebooklib import epub, ITEM_DOCUMENT
 
+        validate_epub_archive(file_path)
         epub_book = epub.read_epub(file_path)
         chapter_num = 0
+        total_chars = 0
 
         for item in epub_book.get_items():
             if item.get_type() == ITEM_DOCUMENT:
@@ -249,6 +295,11 @@ async def extract_epub_text(document_id: str, file_path: str) -> AsyncGenerator[
                     # Extract text from HTML (basic)
                     text = re.sub(r'<[^>]+>', '\n', content.decode('utf-8'))
                     text = re.sub(r'\n+', '\n', text).strip()
+                    total_chars += len(text)
+                    if total_chars > EXTRACTED_TEXT_MAX_CHARS:
+                        raise ExtractionLimitError(
+                            f"Extracted text exceeds the {EXTRACTED_TEXT_MAX_CHARS}-character limit"
+                        )
 
                     if text and len(text) > 100:  # Skip very short sections
                         chapter = Chapter(
@@ -271,9 +322,13 @@ async def extract_epub_text(document_id: str, file_path: str) -> AsyncGenerator[
                         yield chapter
                         chapter_num += 1
 
+                except ExtractionLimitError:
+                    raise
                 except Exception:
                     continue
 
+    except ExtractionLimitError:
+        raise
     except Exception as e:
         raise RuntimeError(f"EPUB extraction failed: {e}")
 
@@ -281,7 +336,8 @@ async def extract_epub_text(document_id: str, file_path: str) -> AsyncGenerator[
 def extract_pdf_text_blocking(
     document_id: str,
     file_path: str,
-    progress_callback: Optional[ProgressCallback] = None
+    progress_callback: Optional[ProgressCallback] = None,
+    chapter_callback: Optional[ChapterCallback] = None,
 ) -> List[Dict]:
     """
     Blocking version of PDF extraction for use in worker threads.
@@ -299,12 +355,15 @@ def extract_pdf_text_blocking(
         with pdfplumber.open(file_path) as pdf:
             total_pages = len(pdf.pages)
             all_text = []
+            total_chars = 0
 
             for page_num, page in enumerate(pdf.pages):
                 try:
                     text = page.extract_text()
                     if text:
-                        all_text.append(text)
+                        total_chars = _append_extracted_text(all_text, text, total_chars)
+                except ExtractionLimitError:
+                    raise
                 except Exception:
                     all_text.append("")
 
@@ -316,6 +375,8 @@ def extract_pdf_text_blocking(
 
             full_text = '\n\n'.join(all_text)
 
+    except ExtractionLimitError:
+        raise
     except Exception:
         # Fallback to PyPDF2
         try:
@@ -323,13 +384,16 @@ def extract_pdf_text_blocking(
                 pdf_reader = PyPDF2.PdfReader(file)
                 total_pages = len(pdf_reader.pages)
                 all_text = []
+                total_chars = 0
 
                 for page_num in range(total_pages):
                     try:
                         page = pdf_reader.pages[page_num]
                         text = page.extract_text()
                         if text:
-                            all_text.append(text)
+                            total_chars = _append_extracted_text(all_text, text, total_chars)
+                    except ExtractionLimitError:
+                        raise
                     except Exception:
                         all_text.append("")
 
@@ -357,29 +421,18 @@ def extract_pdf_text_blocking(
         if chapter.word_count > 0:
             chapter.estimated_audio_duration = (chapter.word_count / 150) * 60
 
-        result.append({
-            "chapter_id": chapter.chapter_id,
-            "document_id": chapter.document_id,
-            "chapter_number": chapter.chapter_number,
-            "title": chapter.title,
-            "start_page": chapter.start_page,
-            "end_page": chapter.end_page,
-            "text_preview": chapter.text_preview[:200] if chapter.text_preview else "",
-            "full_text": chapter.full_text or "",
-            "word_count": chapter.word_count,
-            "estimated_audio_duration": chapter.estimated_audio_duration,
-            "quality_score": chapter.quality_score,
-            "needs_ocr": chapter.needs_ocr,
-            "extraction_method": chapter.extraction_method.value,
-            "language": chapter.language
-        })
+        chapter_data = _chapter_to_dict(chapter)
+        result.append(chapter_data)
+        if chapter_callback:
+            chapter_callback(chapter_data)
 
     return result
 
 def extract_epub_text_blocking(
     document_id: str,
     file_path: str,
-    progress_callback: Optional[ProgressCallback] = None
+    progress_callback: Optional[ProgressCallback] = None,
+    chapter_callback: Optional[ChapterCallback] = None,
 ) -> List[Dict]:
     """
     Blocking version of EPUB extraction for use in worker threads.
@@ -396,7 +449,9 @@ def extract_epub_text_blocking(
         from ebooklib import epub, ITEM_DOCUMENT
 
         chapters = []
+        validate_epub_archive(file_path)
         book = epub.read_epub(file_path)
+        total_chars = 0
 
         # Get all items
         all_items = list(book.get_items())
@@ -409,6 +464,11 @@ def extract_epub_text_blocking(
                 # Simple text extraction (strip HTML tags)
                 text = re.sub(r'<[^>]+>', '\n', content.decode('utf-8', errors='ignore'))
                 text = ' '.join(text.split())
+                total_chars += len(text)
+                if total_chars > EXTRACTED_TEXT_MAX_CHARS:
+                    raise ExtractionLimitError(
+                        f"Extracted text exceeds the {EXTRACTED_TEXT_MAX_CHARS}-character limit"
+                    )
 
                 if text.strip():
                     ch_num = len(chapters) + 1
@@ -428,7 +488,10 @@ def extract_epub_text_blocking(
                     if chapter.word_count > 0:
                         chapter.estimated_audio_duration = (chapter.word_count / 150) * 60
 
-                    chapters.append(chapter)
+                    chapter_data = _chapter_to_dict(chapter)
+                    chapters.append(chapter_data)
+                    if chapter_callback:
+                        chapter_callback(chapter_data)
 
             # Report progress
             if progress_callback and total_items > 0:
@@ -436,27 +499,9 @@ def extract_epub_text_blocking(
                 message = f"Processing section {idx + 1}/{total_items}"
                 progress_callback(progress, message)
 
+    except ExtractionLimitError:
+        raise
     except Exception as e:
         raise RuntimeError(f"EPUB extraction failed: {e}")
 
-    # Build result list
-    result = []
-    for chapter in chapters:
-        result.append({
-            "chapter_id": chapter.chapter_id,
-            "document_id": chapter.document_id,
-            "chapter_number": chapter.chapter_number,
-            "title": chapter.title,
-            "start_page": chapter.start_page,
-            "end_page": chapter.end_page,
-            "text_preview": chapter.text_preview[:200] if chapter.text_preview else "",
-            "full_text": chapter.full_text or "",
-            "word_count": chapter.word_count,
-            "estimated_audio_duration": chapter.estimated_audio_duration,
-            "quality_score": chapter.quality_score,
-            "needs_ocr": chapter.needs_ocr,
-            "extraction_method": chapter.extraction_method.value,
-            "language": chapter.language
-        })
-
-    return result
+    return chapters

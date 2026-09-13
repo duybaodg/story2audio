@@ -7,13 +7,21 @@ import math
 import time
 import logging
 import hashlib
+import hmac
 import asyncio
 import unicodedata
 import threading
 import traceback
 import secrets
 import subprocess
+from contextlib import contextmanager
 from typing import List, Dict, AsyncGenerator, Optional, Tuple
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse, JSONResponse
@@ -24,7 +32,6 @@ from pydantic import BaseModel
 from rate_limiter import RateLimiter
 
 import edge_tts
-from gtts import gTTS
 from dotenv import load_dotenv
 from document_api import router as document_router
 
@@ -94,6 +101,27 @@ logger = logging.getLogger("ebook2audio")
 # ---------------------------------------------------------------------------
 rate_limiter = RateLimiter()
 
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+
+
+def _sign_session_id(session_id: str) -> str:
+    signature = hmac.new(
+        SESSION_SECRET.encode("utf-8"),
+        session_id.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{session_id}.{signature}"
+
+
+def _session_id_from_cookie(cookie_value: Optional[str]) -> Optional[str]:
+    if not cookie_value or "." not in cookie_value:
+        return None
+    session_id, signature = cookie_value.rsplit(".", 1)
+    if not _SESSION_ID_RE.fullmatch(session_id):
+        return None
+    expected = _sign_session_id(session_id).rsplit(".", 1)[1]
+    return session_id if hmac.compare_digest(signature, expected) else None
+
 
 def get_client_ip(request: Request) -> str:
     if TRUST_PROXY_HEADERS:
@@ -105,15 +133,17 @@ def get_client_ip(request: Request) -> str:
 
 @app.middleware("http")
 async def browser_session_middleware(request: Request, call_next):
-    session_id = request.cookies.get("story2audio_session")
-    if not session_id or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", session_id):
+    cookie_value = request.cookies.get("story2audio_session")
+    session_id = _session_id_from_cookie(cookie_value)
+    if not session_id:
         session_id = secrets.token_urlsafe(32)
     request.state.session_id = session_id
     response = await call_next(request)
-    if request.cookies.get("story2audio_session") != session_id:
+    signed_cookie = _sign_session_id(session_id)
+    if cookie_value != signed_cookie:
         response.set_cookie(
             "story2audio_session",
-            session_id,
+            signed_cookie,
             max_age=60 * 60 * 24 * 30,
             httponly=True,
             secure=SESSION_COOKIE_SECURE,
@@ -174,7 +204,7 @@ def validate_cache_id(cache_id: str) -> str:
 # Session Verification Endpoint
 # ---------------------------------------------------------------------------
 @app.get("/tts/session/{cache_id}")
-async def verify_session(cache_id: str):
+async def verify_session(request: Request, cache_id: str):
     """
     Verify if a cached TTS result still exists.
     Returns cache metadata if found, 404 if not.
@@ -182,6 +212,7 @@ async def verify_session(cache_id: str):
     """
     # Validate cache_id format to prevent path traversal
     cache_id = validate_cache_id(cache_id)
+    _require_cache_owner(request, cache_id)
 
     # Check if audio file exists (try .mp3 first, then .wav for lossless)
     audio_path = get_audio_path(cache_id, "mp3")
@@ -219,6 +250,17 @@ AUDIO_CACHE_RETENTION_HOURS = int(os.getenv("AUDIO_CACHE_RETENTION_HOURS", "12")
 TTS_MAX_TEXT_LENGTH = int(os.getenv("TTS_MAX_TEXT_LENGTH", "100000"))
 VIENEU_MAX_WORDS = int(os.getenv("VIENEU_MAX_WORDS", "5000"))
 VIENEU_CHUNK_SIZE = int(os.getenv("VIENEU_CHUNK_SIZE", "500"))
+_configured_session_secret = os.getenv("SESSION_SECRET", "")
+if _configured_session_secret == "replace-with-a-long-random-value":
+    _configured_session_secret = ""
+if SESSION_COOKIE_SECURE and len(_configured_session_secret) < 32:
+    raise RuntimeError("SESSION_SECRET must be a unique value of at least 32 characters")
+SESSION_SECRET = _configured_session_secret or secrets.token_urlsafe(48)
+LOCAL_TTS_MAX_CONCURRENT = max(1, int(os.getenv("LOCAL_TTS_MAX_CONCURRENT", "2")))
+LOCAL_TTS_JOB_TIMEOUT_SECONDS = max(1, int(os.getenv("LOCAL_TTS_JOB_TIMEOUT_SECONDS", "900")))
+
+if not _configured_session_secret:
+    logger.warning("SESSION_SECRET is unset; browser sessions will reset when the app restarts")
 
 if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
@@ -227,6 +269,7 @@ if PROXY:
 generation_status: Dict[str, dict] = {}
 _generation_locks: Dict[str, asyncio.Lock] = {}
 _cancellation_requests: Dict[str, bool] = {}
+_local_tts_slots = threading.BoundedSemaphore(LOCAL_TTS_MAX_CONCURRENT)
 
 
 def request_cancellation(cache_id: str) -> bool:
@@ -423,19 +466,7 @@ def get_cues_jsonl_path(cache_id: str) -> str:
     return os.path.join(CACHE_DIR, f"{cache_id}.cues.jsonl")
 
 
-def save_cache_meta(cache_id: str, data: dict) -> None:
-    if "owners" not in data:
-        existing = load_cache_meta(cache_id)
-        if existing and "owners" in existing:
-            data = {**data, "owners": existing["owners"]}
-    meta_path = get_meta_path(cache_id)
-    tmp_path = f"{meta_path}.tmp.{os.getpid()}.{threading.get_ident()}"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-    os.replace(tmp_path, meta_path)
-
-
-def load_cache_meta(cache_id: str) -> Optional[dict]:
+def _load_cache_meta_unlocked(cache_id: str) -> Optional[dict]:
     meta_path = get_meta_path(cache_id)
     if not os.path.exists(meta_path):
         return None
@@ -444,6 +475,106 @@ def load_cache_meta(cache_id: str) -> Optional[dict]:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def _write_cache_meta_unlocked(cache_id: str, data: dict) -> None:
+    meta_path = get_meta_path(cache_id)
+    tmp_path = f"{meta_path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp_path, meta_path)
+
+
+@contextmanager
+def _cache_meta_lock():
+    # ponytail: one file lock serializes tiny metadata writes; shard it if this becomes hot.
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    lock_path = os.path.join(CACHE_DIR, ".metadata.lock")
+    with open(lock_path, "a+b") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        else:
+            lock_file.seek(0)
+            if not lock_file.read(1):
+                lock_file.write(b"0")
+                lock_file.flush()
+            lock_file.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+            else:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def save_cache_meta(cache_id: str, data: dict) -> None:
+    with _cache_meta_lock():
+        existing = _load_cache_meta_unlocked(cache_id)
+        if existing:
+            authorization = {
+                key: existing[key]
+                for key in ("owners", "owner_state")
+                if key in existing
+            }
+            data = {**data, **authorization}
+        _write_cache_meta_unlocked(cache_id, data)
+
+
+def load_cache_meta(cache_id: str) -> Optional[dict]:
+    return _load_cache_meta_unlocked(cache_id)
+
+
+def update_cache_owner(
+    cache_id: str,
+    owner: str,
+    *,
+    remove: bool = False,
+    reopen: bool = False,
+) -> Optional[dict]:
+    with _cache_meta_lock():
+        metadata = _load_cache_meta_unlocked(cache_id)
+        if not metadata:
+            return None
+        owners = list(dict.fromkeys(metadata.get("owners", [])))
+        if remove:
+            if owner not in owners:
+                return None
+            owners = [current for current in owners if current != owner]
+            if not owners:
+                metadata["owner_state"] = "closed"
+        else:
+            if metadata.get("owner_state") == "closed" and not reopen:
+                return None
+            if owner not in owners:
+                owners.append(owner)
+            if reopen:
+                metadata.pop("owner_state", None)
+        metadata["owners"] = owners
+        _write_cache_meta_unlocked(cache_id, metadata)
+        return metadata
+
+
+def _require_cache_owner(request: Request, cache_id: str) -> dict:
+    metadata = load_cache_meta(cache_id)
+    if not metadata or request.state.session_id not in metadata.get("owners", []):
+        raise HTTPException(status_code=404, detail="Not found")
+    return metadata
+
+
+def _public_cache_status(status_info: dict) -> dict:
+    return {
+        key: value
+        for key, value in status_info.items()
+        if key not in {"owners", "creator"}
+    }
 
 
 def remove_if_exists(path: str) -> bool:
@@ -486,6 +617,8 @@ def cleanup_old_audio_cache(retention_hours: int = AUDIO_CACHE_RETENTION_HOURS) 
     deleted = 0
 
     for filename in os.listdir(CACHE_DIR):
+        if filename == ".metadata.lock":
+            continue
         match = re.match(r"^([a-f0-9]{32})(?:\.|$)", filename)
         if match:
             cache_ids.add(match.group(1))
@@ -1443,26 +1576,24 @@ def vieneu_tts_to_audio_sync(
             raise RuntimeError(f"VieNeu TTS failed: {e}")
 
 
-def gtts_to_bytes(text: str, lang: str = "vi") -> bytes:
-    last_exc = None
-    for attempt in range(3):
-        try:
-            tts = gTTS(text=text, lang=lang, timeout=15)
-            buf = io.BytesIO()
-            tts.write_to_fp(buf)
-            return buf.getvalue()
-        except Exception as exc:
-            last_exc = exc
-            error_type = type(exc).__name__
-            print(f"[WARN] gTTS attempt {attempt + 1} failed with {error_type}: {exc}")
-            if attempt < 2:
-                if any(x in error_type.lower() for x in ("socket", "connection", "timeout")):
-                    delay = 3 * (attempt + 1)
-                else:
-                    delay = 2 * (attempt + 1)
-                time.sleep(delay)
-
-    raise last_exc
+def gtts_to_bytes(text: str, lang: str, timeout: float) -> bytes:
+    try:
+        result = subprocess.run(
+            [sys.executable, os.path.join(BASE_DIR, "gtts_runner.py"), lang],
+            input=text.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=max(0.1, timeout),
+            check=True,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"gTTS exceeded {timeout:.1f} seconds") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(detail or "gTTS subprocess failed") from exc
+    if not result.stdout:
+        raise RuntimeError("gTTS returned empty audio")
+    return result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -1520,6 +1651,14 @@ def generate_chunks_sync(
         loop.close()
 
 
+def generate_chunks_with_slot(*args, **kwargs) -> None:
+    """Run local-provider generation and always return its admission slot."""
+    try:
+        generate_chunks_sync(*args, **kwargs)
+    finally:
+        _local_tts_slots.release()
+
+
 async def generate_chunks(
     text: str,
     voice: str,
@@ -1535,6 +1674,11 @@ async def generate_chunks(
         _generation_locks[cache_id] = asyncio.Lock()
 
     async with _generation_locks[cache_id]:
+        deadline = (
+            time.monotonic() + LOCAL_TTS_JOB_TIMEOUT_SECONDS
+            if engine != "vieneu"
+            else None
+        )
         audio_path = get_audio_path(cache_id)
         cues_all: List[dict] = []
         global_audio_sec = 0.0
@@ -1658,7 +1802,16 @@ async def generate_chunks(
                 )
 
                 if engine == "edge":
-                    audio, words = await edge_tts_to_audio_and_words(chunk_text, voice)
+                    assert deadline is not None
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"TTS generation exceeded {LOCAL_TTS_JOB_TIMEOUT_SECONDS} seconds"
+                        )
+                    audio, words = await asyncio.wait_for(
+                        edge_tts_to_audio_and_words(chunk_text, voice),
+                        timeout=remaining,
+                    )
                 elif engine == "vieneu":
                     # Use sync version directly in thread pool for better performance
                     audio, ext = await loop.run_in_executor(
@@ -1672,8 +1825,16 @@ async def generate_chunks(
                     )
                     words = []  # VieNeu doesn't provide word-level timing
                 else:  # gtts
+                    assert deadline is not None
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"TTS generation exceeded {LOCAL_TTS_JOB_TIMEOUT_SECONDS} seconds"
+                        )
                     gtts_lang = GTTS_LANG_MAP.get(language, "en")
-                    audio = await loop.run_in_executor(None, gtts_to_bytes, chunk_text, gtts_lang)
+                    audio = await loop.run_in_executor(
+                        None, gtts_to_bytes, chunk_text, gtts_lang, remaining
+                    )
                     words = []
 
                 if not audio:
@@ -1882,8 +2043,12 @@ async def start_tts(http_request: Request, background_tasks: BackgroundTasks, re
     require_subtitles = engine == "edge"
 
     if is_cache_valid(cache_id, require_subtitles=require_subtitles):
-        meta = load_cache_meta(cache_id) or {}
-        save_cache_meta(cache_id, {**meta, "owners": list(set(meta.get("owners", [])) | {owner})})
+        if update_cache_owner(cache_id, owner) is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Cached audio is being removed. Try again shortly.",
+                headers={"Retry-After": "1"},
+            )
         return {
             "cache_id": cache_id,
             "status": "completed",
@@ -1894,8 +2059,12 @@ async def start_tts(http_request: Request, background_tasks: BackgroundTasks, re
 
     current = get_effective_status(cache_id)
     if current and current.get("status") in {"queued", "processing", "generating"}:
-        meta = load_cache_meta(cache_id) or current
-        save_cache_meta(cache_id, {**meta, "owners": list(set(meta.get("owners", [])) | {owner})})
+        if update_cache_owner(cache_id, owner) is None:
+            raise HTTPException(
+                status_code=503,
+                detail="TTS job is being cancelled. Try again shortly.",
+                headers={"Retry-After": "1"},
+            )
         return {
             "cache_id": cache_id,
             "status": current.get("status"),
@@ -1954,6 +2123,12 @@ async def start_tts(http_request: Request, background_tasks: BackgroundTasks, re
             )
             raise HTTPException(status_code=503, detail=str(exc)) from exc
     else:
+        if not _local_tts_slots.acquire(blocking=False):
+            raise HTTPException(
+                status_code=503,
+                detail="TTS capacity is full. Try again shortly.",
+                headers={"Retry-After": "5"},
+            )
         generation_status[cache_id] = {
             "status": "queued",
             "progress": 0,
@@ -1963,18 +2138,22 @@ async def start_tts(http_request: Request, background_tasks: BackgroundTasks, re
             "subtitle_ready": False,
             "subtitle_cues": 0,
         }
-        save_cache_meta(cache_id, queued_meta)
-
-        background_tasks.add_task(
-            generate_chunks_sync,
-            text_to_process,
-            voice,
-            engine,
-            cache_id,
-            language,
-            chunk_preview,
-            audio_quality,
-        )
+        try:
+            save_cache_meta(cache_id, queued_meta)
+            background_tasks.add_task(
+                generate_chunks_with_slot,
+                text_to_process,
+                voice,
+                engine,
+                cache_id,
+                language,
+                chunk_preview,
+                audio_quality,
+            )
+        except Exception:
+            generation_status.pop(cache_id, None)
+            _local_tts_slots.release()
+            raise
 
     return {
         "cache_id": cache_id,
@@ -1987,25 +2166,30 @@ async def start_tts(http_request: Request, background_tasks: BackgroundTasks, re
 
 
 @app.get("/tts/status/{cache_id}")
-async def get_status(cache_id: str):
+async def get_status(request: Request, cache_id: str):
     cache_id = validate_cache_id(cache_id)
+    _require_cache_owner(request, cache_id)
     status = get_effective_status(cache_id)
     if not status:
         raise HTTPException(status_code=404, detail="Not found")
-    return status
+    return _public_cache_status(status)
 
 
 @app.delete("/tts/file/{cache_id}")
 async def delete_audio(request: Request, cache_id: str):
     """Cancel ongoing generation or delete completed audio file."""
     cache_id = validate_cache_id(cache_id)
-    metadata = load_cache_meta(cache_id)
-    if not metadata or request.state.session_id not in metadata.get("owners", []):
+    metadata = update_cache_owner(cache_id, request.state.session_id, remove=True)
+    if metadata is None:
         raise HTTPException(status_code=404, detail="Not found")
 
     # Check if generation is in progress
     in_progress = cache_id in generation_status
     status_info = get_effective_status(cache_id)
+    owners = list(dict.fromkeys(metadata.get("owners", [])))
+
+    if owners:
+        return {"status": "unlinked", "message": "Audio removed from this session"}
 
     if in_progress:
         # Request cancellation
@@ -2021,6 +2205,7 @@ async def delete_audio(request: Request, cache_id: str):
         try:
             await request_vieneu_cancel(cache_id)
         except TTSQueueError as exc:
+            update_cache_owner(cache_id, request.state.session_id, reopen=True)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         save_cache_meta(
             cache_id,
@@ -2032,7 +2217,6 @@ async def delete_audio(request: Request, cache_id: str):
         )
         return {"status": "cancelling", "message": "VieNeu generation cancellation requested"}
     else:
-        # Delete completed audio file
         cleanup_incomplete_cache(cache_id)
         return {"status": "deleted", "message": "Audio file deleted"}
 
@@ -2048,6 +2232,8 @@ async def clear_all_cache():
 
     deleted_count = 0
     for filename in os.listdir(CACHE_DIR):
+        if filename == ".metadata.lock":
+            continue
         filepath = os.path.join(CACHE_DIR, filename)
         if remove_if_exists(filepath):
             deleted_count += 1
@@ -2059,6 +2245,7 @@ async def clear_all_cache():
 @app.get("/tts/file/{cache_id}")
 async def get_audio_file(cache_id: str, request: Request):
     cache_id = validate_cache_id(cache_id)
+    _require_cache_owner(request, cache_id)
     if not is_cache_valid(cache_id):
         status = get_effective_status(cache_id)
         if status and status.get("status") in {"queued", "processing"}:
@@ -2075,16 +2262,16 @@ async def get_audio_file(cache_id: str, request: Request):
         filename=f"{cache_id}.mp3",
         headers={
             "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "private, max-age=31536000, immutable",
         },
     )
 
 
 @app.get("/tts/subtitle/srt/{cache_id}")
-async def get_srt_file(cache_id: str):
+async def get_srt_file(request: Request, cache_id: str):
     cache_id = validate_cache_id(cache_id)
-    meta = load_cache_meta(cache_id)
-    if not meta or meta.get("engine") != "edge":
+    meta = _require_cache_owner(request, cache_id)
+    if meta.get("engine") != "edge":
         raise HTTPException(status_code=404, detail="Subtitle not found")
 
     if not is_cache_valid(cache_id, require_subtitles=True):
@@ -2101,10 +2288,10 @@ async def get_srt_file(cache_id: str):
 
 
 @app.get("/tts/subtitle/vtt/{cache_id}")
-async def get_vtt_file(cache_id: str):
+async def get_vtt_file(request: Request, cache_id: str):
     cache_id = validate_cache_id(cache_id)
-    meta = load_cache_meta(cache_id)
-    if not meta or meta.get("engine") != "edge":
+    meta = _require_cache_owner(request, cache_id)
+    if meta.get("engine") != "edge":
         raise HTTPException(status_code=404, detail="Subtitle not found")
 
     if not is_cache_valid(cache_id, require_subtitles=True):
@@ -2121,10 +2308,10 @@ async def get_vtt_file(cache_id: str):
 
 
 @app.get("/tts/cues/{cache_id}")
-async def get_cues(cache_id: str):
+async def get_cues(request: Request, cache_id: str):
     cache_id = validate_cache_id(cache_id)
-    meta = load_cache_meta(cache_id)
-    if not meta or meta.get("engine") != "edge":
+    meta = _require_cache_owner(request, cache_id)
+    if meta.get("engine") != "edge":
         return JSONResponse({"cues": [], "done": True})
 
     cues = load_cues_json(cache_id)
@@ -2160,8 +2347,8 @@ async def get_cues(cache_id: str):
 @app.get("/tts/cues/stream/{cache_id}")
 async def stream_cues_live(cache_id: str, request: Request):
     cache_id = validate_cache_id(cache_id)
-    meta = load_cache_meta(cache_id)
-    if not meta or meta.get("engine") != "edge":
+    meta = _require_cache_owner(request, cache_id)
+    if meta.get("engine") != "edge":
         async def empty():
             payload = json.dumps({"done": True}, ensure_ascii=False)
             yield f"event: complete\ndata: {payload}\n\n"
@@ -2289,8 +2476,9 @@ async def stream_cues_live(cache_id: str, request: Request):
 
 
 @app.get("/tts/stream/{cache_id}")
-async def stream_audio_live(cache_id: str):
+async def stream_audio_live(request: Request, cache_id: str):
     cache_id = validate_cache_id(cache_id)
+    _require_cache_owner(request, cache_id)
     audio_path = get_audio_path(cache_id)
 
     st = get_effective_status(cache_id)

@@ -5,6 +5,9 @@ services:
     restart: unless-stopped
     # Queue jobs must fail visibly under memory pressure, never be evicted silently.
     command: redis-server --maxmemory 128mb --maxmemory-policy noeviction
+    mem_limit: ${REDIS_MEMORY_LIMIT:-192m}
+    cpus: ${REDIS_CPU_LIMIT:-0.5}
+    pids_limit: ${REDIS_PIDS_LIMIT:-100}
     volumes:
       - ebook2audio_redis:/data
     healthcheck:
@@ -49,6 +52,13 @@ services:
       TTS_MAX_TEXT_LENGTH: "${TTS_MAX_TEXT_LENGTH:-100000}"
       TTS_MAX_QUEUE_SIZE: "${TTS_MAX_QUEUE_SIZE:-20}"
       TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS: "${TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS:-300}"
+      LOCAL_TTS_MAX_CONCURRENT: "${LOCAL_TTS_MAX_CONCURRENT:-2}"
+      LOCAL_TTS_JOB_TIMEOUT_SECONDS: "${LOCAL_TTS_JOB_TIMEOUT_SECONDS:-900}"
+      EXTRACTED_TEXT_MAX_CHARS: "${EXTRACTED_TEXT_MAX_CHARS:-2000000}"
+      EPUB_MAX_ENTRIES: "${EPUB_MAX_ENTRIES:-1000}"
+      EPUB_MAX_ENTRY_BYTES: "${EPUB_MAX_ENTRY_BYTES:-52428800}"
+      EPUB_MAX_UNCOMPRESSED_BYTES: "${EPUB_MAX_UNCOMPRESSED_BYTES:-209715200}"
+      EPUB_MAX_COMPRESSION_RATIO: "${EPUB_MAX_COMPRESSION_RATIO:-100}"
       # Hugging Face token for faster model downloads (optional)
       # Get free token at: https://huggingface.co/settings/tokens
       HF_TOKEN: "${HF_TOKEN:-}"
@@ -59,15 +69,9 @@ services:
       - ebook2audio_documents:/app/documents
       - ebook2audio_jobs:/app/jobs
       - ebook2audio_models:/home/app/.cache/huggingface  # VieNeu model cache (1-2GB)
-    # Resource limits (optional - uncomment for production)
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '4'      # Max 4 cores for parallel processing
-    #       memory: 4G     # Max 4GB memory
-    #     reservations:
-    #       cpus: '2'      # Guarantee 2 cores
-    #       memory: 2G     # Guarantee 2GB memory
+    mem_limit: ${APP_MEMORY_LIMIT:-4g}
+    cpus: ${APP_CPU_LIMIT:-2.0}
+    pids_limit: ${APP_PIDS_LIMIT:-256}
     healthcheck:
       test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       interval: 30s
@@ -104,6 +108,9 @@ services:
       - ebook2audio_documents:/app/documents
       - ebook2audio_jobs:/app/jobs
       - ebook2audio_models:/home/app/.cache/huggingface
+    mem_limit: ${VIENEU_MEMORY_LIMIT:-6g}
+    cpus: ${VIENEU_CPU_LIMIT:-3.0}
+    pids_limit: ${VIENEU_PIDS_LIMIT:-256}
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/vieneu-worker-ready"]
       interval: 15s
@@ -111,14 +118,6 @@ services:
       retries: 3
       start_period: 10m
     # Keep one worker for VieNeu on small servers. Add replicas only with enough RAM.
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '3'
-    #       memory: 6G
-    #     reservations:
-    #       cpus: '1'
-    #       memory: 4G
 
 volumes:
   ebook2audio_cache:

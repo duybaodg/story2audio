@@ -8,7 +8,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from text_extractor import (
     _assess_text_quality,
-    _detect_chapters_in_text
+    _detect_chapters_in_text,
+    _append_extracted_text,
+    ExtractionLimitError,
 )
 from models import Chapter, ExtractionMethod
 
@@ -80,6 +82,14 @@ Just regular paragraphs one after another.
     assert len(chapters) == 1, f"Expected 1 chapter when no pattern found, got {len(chapters)}"
     assert chapters[0].chapter_number == 1
     assert chapters[0].title == "Full Text"
+
+
+def test_extracted_text_budget_rejects_oversized_output(monkeypatch):
+    monkeypatch.setattr("text_extractor.EXTRACTED_TEXT_MAX_CHARS", 5)
+    parts = []
+    assert _append_extracted_text(parts, "123", 0) == 3
+    with pytest.raises(ExtractionLimitError, match="character limit"):
+        _append_extracted_text(parts, "456", 3)
 
 @pytest.mark.asyncio
 async def test_extract_pdf_text():
