@@ -1,4 +1,4 @@
-# 🌟 Lịch sử Phát triển (Release Notes) - Ebook2Audio
+# 🌟 Lịch sử Phát triển (Release Notes) - Ebook to Audio
 
 Dưới đây là tài liệu tổng hợp lại toàn bộ các tính năng, cải tiến và bản vá lỗi từ lúc khởi tạo dự án cho tới nay.
 
@@ -63,7 +63,7 @@ Bản cập nhật lớn tiếp theo mang đến tính năng **Phụ đề trự
 - **Redesign giao diện người dùng:**
   - Bố cục mới dạng card-based, bảng màu hiện đại, responsive trên mọi kích thước màn hình.
   - Bộ chuyển đổi ngôn ngữ (Language Switcher) tích hợp trên giao diện — thay thế cơ chế inject locale từ server bằng client-side i18n hoàn toàn.
-  - Tiêu đề cập nhật: "Story to Audio + Live Subtitle".
+  - Tiêu đề cập nhật: "Ebook to Audio + Live Subtitle".
 
 ### 🚀 Cải tiến hiệu năng & Tối ưu hóa (Enhancements)
 
@@ -145,7 +145,7 @@ Tập trung nâng cao trải nghiệm tải tệp và tinh chỉnh hệ thống 
 
 ## [v1.0.0] - Phiên bản Khởi tạo (Initial Release)
 
-Phiên bản đầu tiên của Ebook2Audio với kiến trúc Core FastAPI và Live Streaming.
+Phiên bản đầu tiên của Ebook to Audio với kiến trúc Core FastAPI và Live Streaming.
 
 ### ✨ Tính năng cốt lõi (Core Features)
 - Xây dựng thành công hệ thống **Text-to-Speech (TTS) Web App** dùng **FastAPI**.

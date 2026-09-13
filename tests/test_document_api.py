@@ -488,6 +488,9 @@ def test_ui_uses_fixed_vieneu_model_and_offers_all_voices():
     assert "hàng đợi Redis" not in html
     assert 'id="wordCount"' in html
     assert 'id="model"' not in html
+    assert "https://github.com/duybaodg/story2audio" in html
+    assert "https://github.com/dvchd/story2audio" in html
+    assert "https://github.com/pnnbao97/VieNeu-TTS" in html
 
     from vieneu_model import get_preset_voices_from_file
 

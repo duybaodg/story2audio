@@ -1,4 +1,4 @@
-# Deploy Ebook2Audio to Ubuntu with GitHub Actions
+# Deploy Ebook to Audio to Ubuntu with GitHub Actions
 
 This guide deploys the current Docker Compose stack directly to an Ubuntu server using an existing deployment user. Replace every uppercase placeholder, such as `DEPLOY_USER`, before running a command.
 
