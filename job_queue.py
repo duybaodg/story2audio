@@ -98,15 +98,20 @@ def _run_extraction_blocking(
     document_id: str,
     file_path: str,
     file_type: str,
-    progress_callback: ProgressCallback
+    progress_callback: ProgressCallback,
+    chapter_callback: Callable[[Dict], None],
 ) -> List[Dict]:
     """
     Blocking wrapper for extraction. Runs in worker thread.
     """
     if file_type == "pdf":
-        return extract_pdf_text_blocking(document_id, file_path, progress_callback)
+        return extract_pdf_text_blocking(
+            document_id, file_path, progress_callback, chapter_callback
+        )
     elif file_type == "epub":
-        return extract_epub_text_blocking(document_id, file_path, progress_callback)
+        return extract_epub_text_blocking(
+            document_id, file_path, progress_callback, chapter_callback
+        )
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -125,6 +130,7 @@ def _job_worker(job_id: str, document_id: str, file_path: str, file_type: str):
         job.status = JobStatus.RUNNING
         job.started_at = datetime.now(UTC)
         job.message = "Starting extraction..."
+        job.result = {"chapters": []}
         _save_job(job)
 
         deadline = time.monotonic() + JOB_TIMEOUT_MINUTES * 60
@@ -139,9 +145,19 @@ def _job_worker(job_id: str, document_id: str, file_path: str, file_type: str):
                 raise RuntimeError(f"Extraction timed out after {JOB_TIMEOUT_MINUTES} minutes")
             _update_job_progress(job_id, progress, message)
 
+        def publish_chapter(chapter: Dict):
+            current = _load_job(job_id)
+            if current:
+                result = current.result or {"chapters": []}
+                result.setdefault("chapters", []).append(chapter)
+                current.result = result
+                _save_job(current)
+
         # Run extraction (blocking)
         callback(0.0, "Starting extraction...")
-        chapters = _run_extraction_blocking(document_id, file_path, file_type, callback)
+        chapters = _run_extraction_blocking(
+            document_id, file_path, file_type, callback, publish_chapter
+        )
         callback(1.0, "Finishing extraction...")
 
         # Store result

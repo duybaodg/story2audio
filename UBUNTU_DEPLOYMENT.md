@@ -101,6 +101,14 @@ chmod 600 .env
 nano .env
 ```
 
+Generate a server-only signing secret and add it to `.env`:
+
+```bash
+printf 'SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+```
+
+Do not store `SESSION_SECRET` in GitHub; it belongs only in the server `.env`.
+
 For direct access on port 8000, keep:
 
 ```env
@@ -110,6 +118,19 @@ SESSION_COOKIE_SECURE=false
 ```
 
 Optionally add `HF_TOKEN` to reduce anonymous Hugging Face download limitations. Never commit `.env`.
+
+For the public Nginx/HTTPS deployment, use:
+
+```env
+APP_PORT=127.0.0.1:8000
+TRUST_PROXY_HEADERS=true
+SESSION_COOKIE_SECURE=true
+ENABLE_GLOBAL_CACHE_CLEAR=false
+```
+
+Nginx must overwrite `X-Forwarded-For` with the connecting client address. The
+application will refuse to start with secure cookies if `SESSION_SECRET` is
+missing, too short, or still contains the example value.
 
 ## 6. Choose how the application is reachable
 

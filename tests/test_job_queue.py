@@ -175,7 +175,7 @@ def test_worker_honors_cancellation(monkeypatch):
     )
     _save_job(job)
     job_queue._cancelled_jobs.add(job.job_id)
-    monkeypatch.setattr(job_queue, "_run_extraction_blocking", lambda *args: args[-1](0.5, "working"))
+    monkeypatch.setattr(job_queue, "_run_extraction_blocking", lambda *args: args[-2](0.5, "working"))
 
     job_queue._job_worker(job.job_id, job.document_id, "/tmp/test.pdf", "pdf")
 

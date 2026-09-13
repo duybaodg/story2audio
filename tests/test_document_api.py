@@ -3,7 +3,10 @@ import os
 import sys
 import tempfile
 import time
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -14,11 +17,17 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 os.environ['DOCUMENT_STORAGE_PATH'] = tempfile.mkdtemp()
 
 import main
+import document_api
 from main import app
 from document_api import router
 app.include_router(router)
 
 client = TestClient(app)
+
+
+def browser_session_id(test_client):
+    test_client.get("/")
+    return main._session_id_from_cookie(test_client.cookies["story2audio_session"])
 
 def test_upload_initiate():
     response = client.post(
@@ -92,21 +101,201 @@ def test_tts_delete_requires_cache_owner(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
     owner = TestClient(app)
     intruder = TestClient(app)
-    owner.get("/")
-    intruder.get("/")
+    owner_session = browser_session_id(owner)
+    browser_session_id(intruder)
 
     cache_id = "a" * 32
-    main.save_cache_meta(cache_id, {"status": "completed", "owners": [owner.cookies["story2audio_session"]]})
+    main.save_cache_meta(cache_id, {"status": "completed", "owners": [owner_session]})
     Path(main.get_audio_path(cache_id)).write_bytes(b"audio")
 
     assert intruder.delete(f"/tts/file/{cache_id}").status_code == 404
     assert owner.delete(f"/tts/file/{cache_id}").status_code == 200
+
+
+def test_tts_status_is_owner_only_and_hides_authorization_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+    owner = TestClient(app)
+    intruder = TestClient(app)
+    owner_session = browser_session_id(owner)
+    browser_session_id(intruder)
+    cache_id = "b" * 32
+    main.save_cache_meta(
+        cache_id,
+        {
+            "status": "completed",
+            "owners": [owner_session],
+            "engine": "gtts",
+            "file_size": 5,
+        },
+    )
+    Path(main.get_audio_path(cache_id)).write_bytes(b"audio")
+
+    response = owner.get(f"/tts/status/{cache_id}")
+    assert response.status_code == 200
+    assert "owners" not in response.json()
+    assert "creator" not in response.json()
+    assert owner.get(f"/tts/session/{cache_id}").status_code == 200
+    audio_response = owner.get(f"/tts/file/{cache_id}")
+    assert audio_response.status_code == 200
+    assert audio_response.headers["cache-control"].startswith("private")
+    for path in (
+        f"/tts/session/{cache_id}",
+        f"/tts/status/{cache_id}",
+        f"/tts/file/{cache_id}",
+        f"/tts/subtitle/srt/{cache_id}",
+        f"/tts/subtitle/vtt/{cache_id}",
+        f"/tts/cues/{cache_id}",
+        f"/tts/cues/stream/{cache_id}",
+        f"/tts/stream/{cache_id}",
+    ):
+        assert intruder.get(path).status_code == 404
+
+    intruder.cookies.set("story2audio_session", owner_session)
+    assert intruder.get(f"/tts/status/{cache_id}").status_code == 404
+
+
+def test_duplicate_owner_cannot_delete_shared_audio(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+    creator = TestClient(app)
+    consumer = TestClient(app)
+    creator_session = browser_session_id(creator)
+    consumer_session = browser_session_id(consumer)
+    cache_id = "d" * 32
+    main.save_cache_meta(
+        cache_id,
+        {
+            "status": "completed",
+            "owners": [creator_session, consumer_session],
+        },
+    )
+    audio_path = Path(main.get_audio_path(cache_id))
+    audio_path.write_bytes(b"audio")
+
+    response = consumer.delete(f"/tts/file/{cache_id}")
+    assert response.json()["status"] == "unlinked"
+    assert audio_path.exists()
+    assert main.load_cache_meta(cache_id)["owners"] == [creator_session]
+    assert consumer.get(f"/tts/status/{cache_id}").status_code == 404
+
+    assert creator.delete(f"/tts/file/{cache_id}").json()["status"] == "deleted"
+    assert not audio_path.exists()
+
+
+def test_shared_active_audio_unlinks_without_cancelling(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+    creator = TestClient(app)
+    consumer = TestClient(app)
+    creator_session = browser_session_id(creator)
+    consumer_session = browser_session_id(consumer)
+    cache_id = "f" * 32
+    main.save_cache_meta(
+        cache_id,
+        {"status": "generating", "owners": [creator_session, consumer_session]},
+    )
+    main.generation_status[cache_id] = {"status": "generating"}
+
+    try:
+        response = consumer.delete(f"/tts/file/{cache_id}")
+        assert response.json()["status"] == "unlinked"
+        assert cache_id not in main._cancellation_requests
+        assert cache_id in main.generation_status
+    finally:
+        main.generation_status.pop(cache_id, None)
+        main.cleanup_incomplete_cache(cache_id)
+
+
+def test_worker_metadata_write_cannot_overwrite_owner_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+    cache_id = "1" * 32
+    main.save_cache_meta(cache_id, {"status": "queued", "owners": ["first"]})
+    stale_worker_copy = main.load_cache_meta(cache_id)
+
+    main.update_cache_owner(cache_id, "second")
+    main.save_cache_meta(cache_id, {**stale_worker_copy, "status": "processing"})
+    assert main.load_cache_meta(cache_id)["owners"] == ["first", "second"]
+
+    stale_worker_copy = main.load_cache_meta(cache_id)
+    main.update_cache_owner(cache_id, "second", remove=True)
+    main.save_cache_meta(cache_id, {**stale_worker_copy, "status": "completed"})
+    assert main.load_cache_meta(cache_id)["owners"] == ["first"]
+
+
+def test_last_owner_detach_closes_cache_to_racing_attachments(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+    cache_id = "3" * 32
+    main.save_cache_meta(cache_id, {"status": "generating", "owners": ["first"]})
+
+    detached = main.update_cache_owner(cache_id, "first", remove=True)
+
+    assert detached["owners"] == []
+    assert detached["owner_state"] == "closed"
+    assert main.update_cache_owner(cache_id, "racing-owner") is None
 
 def test_stream_extraction():
     """Test streaming extraction endpoint returns correct content type for non-existent document."""
     response = client.get("/document/test-doc-123/extract/stream")
     # Should return 404 for non-existent document
     assert response.status_code == 404
+
+
+def test_stream_extraction_reuses_one_bounded_job(tmp_path, monkeypatch):
+    from file_processor import active_documents
+    from models import Document, FileType
+    from job_queue import JobStatus
+
+    owner = TestClient(app)
+    owner_session = browser_session_id(owner)
+    document = Document(
+        document_id="stream-doc",
+        filename="stream.pdf",
+        file_type=FileType.PDF,
+        file_size=1,
+        file_path=str(tmp_path / "stream.pdf"),
+        owner_session=owner_session,
+    )
+    active_documents[document.document_id] = document
+    submissions = []
+    status_calls = 0
+
+    async def fake_submit(*args):
+        submissions.append(args)
+        return "job-1"
+
+    def fake_status(job_id):
+        nonlocal status_calls
+        status_calls += 1
+        status = JobStatus.PENDING if status_calls <= 2 else JobStatus.COMPLETED
+        return SimpleNamespace(
+            status=status,
+            progress=1.0 if status == JobStatus.COMPLETED else 0.0,
+            message="done" if status == JobStatus.COMPLETED else "queued",
+            result={
+                "chapters": [
+                    {
+                        "chapter_id": "chapter-1",
+                        "chapter_number": 1,
+                        "title": "One",
+                        "word_count": 1,
+                        "quality_score": 1.0,
+                        "needs_ocr": False,
+                        "text_preview": "one",
+                    }
+                ]
+            },
+            error=None,
+        )
+
+    monkeypatch.setattr(document_api, "submit_extraction_job", fake_submit)
+    monkeypatch.setattr(document_api, "get_job_status", fake_status)
+
+    try:
+        first_response = owner.get("/document/stream-doc/extract/stream")
+        assert first_response.status_code == 200
+        assert first_response.text.index("chapter-1") < first_response.text.index("done")
+        assert owner.get("/document/stream-doc/extract/stream").status_code == 200
+        assert len(submissions) == 1
+    finally:
+        active_documents.pop(document.document_id, None)
 
 
 def test_tts_with_chapters():
@@ -136,6 +325,8 @@ def test_tts_stream_active_generation_waits_without_503(monkeypatch):
     cache_id = "a" * 32
     audio_path = main.get_audio_path(cache_id)
     monkeypatch.setattr(main, "TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS", 0)
+    owner_session = browser_session_id(client)
+    main.save_cache_meta(cache_id, {"status": "generating", "owners": [owner_session]})
 
     main.generation_status[cache_id] = {
         "status": "generating",
@@ -149,8 +340,81 @@ def test_tts_stream_active_generation_waits_without_503(monkeypatch):
         assert response.content == b""
     finally:
         main.generation_status.pop(cache_id, None)
+        main.cleanup_incomplete_cache(cache_id)
         if os.path.exists(audio_path):
             os.remove(audio_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("engine", "voice"),
+    (("edge", "vi-VN-HoaiMyNeural"), ("gtts", "gtts")),
+)
+async def test_local_tts_has_a_whole_job_deadline(tmp_path, monkeypatch, engine, voice):
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(main, "LOCAL_TTS_JOB_TIMEOUT_SECONDS", -1)
+    cache_id = "e" * 32
+    main.save_cache_meta(cache_id, {"owners": ["owner"]})
+
+    await main.generate_chunks(
+        text="hello",
+        voice=voice,
+        engine=engine,
+        cache_id=cache_id,
+        chunks=["hello"],
+    )
+
+    metadata = main.load_cache_meta(cache_id)
+    assert metadata["status"] == "failed"
+    assert "TimeoutError" in metadata["error"]
+
+
+@pytest.mark.asyncio
+async def test_gtts_keeps_capacity_until_executor_stops(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CACHE_DIR", str(tmp_path))
+    slot = main.threading.BoundedSemaphore(1)
+    monkeypatch.setattr(main, "_local_tts_slots", slot)
+    started = main.threading.Event()
+    release = main.threading.Event()
+
+    def blocked_gtts(_text, _language, _timeout):
+        started.set()
+        assert release.wait(timeout=2)
+        return b"audio"
+
+    monkeypatch.setattr(main, "gtts_to_bytes", blocked_gtts)
+    assert slot.acquire(blocking=False)
+    cache_id = "2" * 32
+    main.save_cache_meta(cache_id, {"owners": ["owner"]})
+
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            main.generate_chunks_with_slot,
+            "hello",
+            "gtts",
+            "gtts",
+            cache_id,
+            "en",
+            ["hello"],
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    await asyncio.sleep(0.05)
+    assert not task.done()
+    assert not slot.acquire(blocking=False)
+
+    release.set()
+    await asyncio.wait_for(task, timeout=2)
+    assert slot.acquire(blocking=False)
+
+
+def test_gtts_subprocess_has_a_hard_timeout(monkeypatch):
+    def timeout(*_args, **_kwargs):
+        raise main.subprocess.TimeoutExpired("gtts", 1)
+
+    monkeypatch.setattr(main.subprocess, "run", timeout)
+    with pytest.raises(TimeoutError):
+        main.gtts_to_bytes("hello", "en", 1)
 
 
 def test_cleanup_old_audio_cache_removes_expired_files(monkeypatch, tmp_path):
@@ -263,7 +527,7 @@ def test_document_routes_are_isolated_by_browser_session(tmp_path):
     stranger = TestClient(app)
     owner.get("/document/health")
     stranger.get("/document/health")
-    owner_session = owner.cookies.get("story2audio_session")
+    owner_session = browser_session_id(owner)
     document = Document(
         document_id="private-doc",
         filename="private.pdf",
@@ -294,6 +558,20 @@ def test_tts_rejects_oversized_text(monkeypatch):
         json={"text": "123456", "voice": "vi-VN-HoaiMyNeural", "engine": "edge"},
     )
     assert response.status_code == 413
+
+
+def test_local_tts_rejects_when_capacity_is_full(monkeypatch):
+    class FullCapacity:
+        def acquire(self, blocking=False):
+            return False
+
+    monkeypatch.setattr(main, "_local_tts_slots", FullCapacity())
+    response = client.post(
+        "/tts/start",
+        json={"text": "capacity check", "voice": "vi-VN-HoaiMyNeural", "engine": "edge"},
+    )
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
 
 
 def test_vieneu_rejects_more_than_5000_words(monkeypatch):

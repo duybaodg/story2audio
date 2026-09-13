@@ -23,7 +23,13 @@ def _get_config():
         'UPLOAD_MAX_SIZE_MB': int(os.getenv("UPLOAD_MAX_SIZE_MB", "50")),
         'UPLOAD_CHUNK_SIZE': int(os.getenv("UPLOAD_CHUNK_SIZE", "5242880")),  # 5MB
         'UPLOAD_SESSION_EXPIRY_HOURS': int(os.getenv("UPLOAD_SESSION_EXPIRY_HOURS", "12")),
-        'DOCUMENT_STORAGE_PATH': os.getenv("DOCUMENT_STORAGE_PATH", "/app/documents")
+        'DOCUMENT_STORAGE_PATH': os.getenv("DOCUMENT_STORAGE_PATH", "/app/documents"),
+        'EPUB_MAX_ENTRIES': int(os.getenv("EPUB_MAX_ENTRIES", "1000")),
+        'EPUB_MAX_ENTRY_BYTES': int(os.getenv("EPUB_MAX_ENTRY_BYTES", str(50 * 1024 * 1024))),
+        'EPUB_MAX_UNCOMPRESSED_BYTES': int(
+            os.getenv("EPUB_MAX_UNCOMPRESSED_BYTES", str(200 * 1024 * 1024))
+        ),
+        'EPUB_MAX_COMPRESSION_RATIO': int(os.getenv("EPUB_MAX_COMPRESSION_RATIO", "100")),
     }
 
 def _get_storage_paths():
@@ -121,6 +127,43 @@ def _validate_file_size(file_size: int, max_size: int, max_size_mb: int) -> None
         )
 
 
+def _validate_epub_archive(zf: zipfile.ZipFile) -> None:
+    """Fully validate EPUB expansion before EbookLib can parse the archive."""
+    config = _get_config()
+    files = [info for info in zf.infolist() if not info.is_dir()]
+    if len(files) > config['EPUB_MAX_ENTRIES']:
+        raise ValueError("EPUB contains too many files")
+
+    declared_total = 0
+    for info in files:
+        if info.flag_bits & 0x1:
+            raise ValueError("Encrypted EPUB files are not supported")
+        if info.file_size > config['EPUB_MAX_ENTRY_BYTES']:
+            raise ValueError("EPUB entry exceeds the expanded-size limit")
+        declared_total += info.file_size
+        if declared_total > config['EPUB_MAX_UNCOMPRESSED_BYTES']:
+            raise ValueError("EPUB expanded size exceeds the limit")
+        if info.file_size and info.file_size > max(1, info.compress_size) * config['EPUB_MAX_COMPRESSION_RATIO']:
+            raise ValueError("EPUB compression ratio exceeds the limit")
+
+    actual_total = 0
+    for info in files:
+        actual_entry = 0
+        with zf.open(info) as entry:
+            while chunk := entry.read(64 * 1024):
+                actual_entry += len(chunk)
+                actual_total += len(chunk)
+                if actual_entry > config['EPUB_MAX_ENTRY_BYTES']:
+                    raise ValueError("EPUB entry exceeds the expanded-size limit")
+                if actual_total > config['EPUB_MAX_UNCOMPRESSED_BYTES']:
+                    raise ValueError("EPUB expanded size exceeds the limit")
+
+
+def validate_epub_archive(path: str) -> None:
+    with zipfile.ZipFile(path) as zf:
+        _validate_epub_archive(zf)
+
+
 def _detect_file_type(path: str) -> FileType:
     """Detect supported document types from file content, not just extension."""
     with open(path, "rb") as f:
@@ -132,11 +175,16 @@ def _detect_file_type(path: str) -> FileType:
     if zipfile.is_zipfile(path):
         with zipfile.ZipFile(path) as zf:
             names = set(zf.namelist())
+            mimetype = b""
             try:
-                mimetype = zf.read("mimetype").strip()
+                mimetype_info = zf.getinfo("mimetype")
+                if mimetype_info.file_size <= 1024:
+                    with zf.open(mimetype_info) as entry:
+                        mimetype = entry.read(1025).strip()
             except KeyError:
-                mimetype = b""
+                pass
             if mimetype == b"application/epub+zip" or "META-INF/container.xml" in names:
+                _validate_epub_archive(zf)
                 return FileType.EPUB
 
     raise ValueError("File content does not match supported PDF/EPUB types")

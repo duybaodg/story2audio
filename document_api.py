@@ -18,7 +18,6 @@ from file_processor import (
     active_sessions,
     active_documents
 )
-from text_extractor import extract_pdf_text, extract_epub_text
 from job_queue import (
     submit_extraction_job,
     get_job_status,
@@ -37,6 +36,8 @@ _CHUNK_READ_SIZE = 1024 * 1024
 _MAX_CONCURRENT_CHUNKS_PER_UPLOAD = 5
 _chunk_lock = asyncio.Lock()
 _active_chunk_counts: dict[str, int] = {}
+# ponytail: one process-wide start lock is enough for the current single web process.
+_extraction_start_lock = asyncio.Lock()
 
 
 def _session_id(request: Request) -> str:
@@ -99,6 +100,35 @@ async def _release_chunk_slot(upload_id: str) -> None:
             _active_chunk_counts.pop(upload_id, None)
         else:
             _active_chunk_counts[upload_id] = current - 1
+
+
+async def _ensure_extraction_job(document, *, join_existing: bool) -> str:
+    async with _extraction_start_lock:
+        if document.status == DocumentStatus.EXTRACTING:
+            job_id = document.metadata.get("extraction_job_id")
+            job = get_job_status(job_id) if job_id else None
+            if join_existing and job and job.status in {
+                JobStatus.PENDING,
+                JobStatus.RUNNING,
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+            }:
+                return job_id
+            raise HTTPException(status_code=409, detail="Extraction already in progress")
+
+        job_id = await submit_extraction_job(
+            document.document_id,
+            document.file_path,
+            document.file_type.value,
+        )
+        document.metadata["extraction_job_id"] = job_id
+        job = get_job_status(job_id)
+        if job and job.status == JobStatus.FAILED:
+            document.status = DocumentStatus.ERROR
+        elif not job or job.status != JobStatus.COMPLETED:
+            document.status = DocumentStatus.EXTRACTING
+        save_document(document)
+        return job_id
 
 @router.get("/health")
 async def health_check():
@@ -248,103 +278,71 @@ async def stream_extraction(request: Request, document_id: str):
     Yields Chapter objects as they are extracted.
     """
     document = await _owned_document(request, document_id)
-
-    if document.status == DocumentStatus.EXTRACTING:
-        # Extraction already in progress
-        pass
-
-    # Update status
-    # NOTE: Thread safety limitation - multiple simultaneous requests to same document
-    # could cause race conditions. Production use should add locks.
-    document.status = DocumentStatus.EXTRACTING
-    save_document(document)
+    job_id = None
+    if document.status != DocumentStatus.READY:
+        job_id = await _ensure_extraction_job(document, join_existing=True)
 
     async def event_generator():
-        try:
-            chapter_count = 0
-            progress_chapters = []
-
-            # Extract based on file type
-            if document.file_type.value == "pdf":
-                stream = extract_pdf_text(document_id, document.file_path)
-            else:  # epub
-                stream = extract_epub_text(document_id, document.file_path)
-
-            async for chapter in stream:
-                chapter_count += 1
-
-                # Skip progress indicators
-                if chapter.chapter_number == 0:
-                    progress = {
-                        "type": "progress",
-                        "current": chapter.word_count,  # Reuse field for page count
-                        "message": chapter.title
-                    }
-                    yield f"event: progress\ndata: {json.dumps(progress)}\n\n"
-                    continue
-
-                # Save chapter
-                # Note: Chapter storage will be added in next task
-                progress_chapters.append(chapter)
-
-                # Send chapter event
+        last_progress = None
+        sent_chapters = 0
+        chapters = []
+        while job_id:
+            job = get_job_status(job_id)
+            if not job:
+                yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': 'Extraction job not found'})}\n\n"
+                return
+            progress = (job.progress, job.message)
+            if progress != last_progress:
+                payload = {
+                    "type": "progress",
+                    "current": job.progress,
+                    "message": job.message,
+                }
+                yield f"event: progress\ndata: {json.dumps(payload)}\n\n"
+                last_progress = progress
+            chapters = (job.result or {}).get("chapters", [])
+            for chapter in chapters[sent_chapters:]:
                 chapter_data = {
                     "type": "chapter",
                     "chapter": {
-                        "chapter_id": chapter.chapter_id,
-                        "chapter_number": chapter.chapter_number,
-                        "title": chapter.title,
-                        "word_count": chapter.word_count,
-                        "quality_score": chapter.quality_score,
-                        "needs_ocr": chapter.needs_ocr,
-                        "text_preview": chapter.text_preview[:200]
-                    }
+                        "chapter_id": chapter.get("chapter_id"),
+                        "chapter_number": chapter.get("chapter_number"),
+                        "title": chapter.get("title"),
+                        "word_count": chapter.get("word_count"),
+                        "quality_score": chapter.get("quality_score"),
+                        "needs_ocr": chapter.get("needs_ocr"),
+                        "text_preview": (chapter.get("text_preview") or "")[:200],
+                    },
                 }
                 yield f"event: chapter\ndata: {json.dumps(chapter_data)}\n\n"
+            sent_chapters = len(chapters)
+            if job.status == JobStatus.FAILED:
+                payload = {"type": "error", "error": job.error or "Extraction failed"}
+                yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+                return
+            if job.status == JobStatus.COMPLETED:
+                break
+            await asyncio.sleep(0.25)
 
-            # Update document status
-            # NOTE: Thread safety limitation - multiple simultaneous requests to same document
-            # could cause race conditions. Production use should add locks.
-            document.total_chapters = len(progress_chapters)
-            document.status = DocumentStatus.READY
-            document.extraction_progress = 1.0
-
-            # Store chapters in metadata for content endpoint retrieval
-            document.metadata["chapters"] = [
-                {
-                    "chapter_id": ch.chapter_id,
-                    "chapter_number": ch.chapter_number,
-                    "title": ch.title,
-                    "word_count": ch.word_count,
-                    "full_text": getattr(ch, 'full_text', ch.text_preview),
-                    "quality_score": ch.quality_score,
-                    "needs_ocr": ch.needs_ocr
-                }
-                for ch in progress_chapters
-            ]
-
-            save_document(document)
-
-            # Send completion event
-            complete_data = {
-                "type": "complete",
-                "total_chapters": len(progress_chapters)
+        if not job_id:
+            chapters = document.metadata.get("chapters", [])
+        for chapter in chapters[sent_chapters:]:
+            chapter_data = {
+                "type": "chapter",
+                "chapter": {
+                    "chapter_id": chapter.get("chapter_id"),
+                    "chapter_number": chapter.get("chapter_number"),
+                    "title": chapter.get("title"),
+                    "word_count": chapter.get("word_count"),
+                    "quality_score": chapter.get("quality_score"),
+                    "needs_ocr": chapter.get("needs_ocr"),
+                    "text_preview": (chapter.get("text_preview") or "")[:200],
+                },
             }
-            yield f"event: complete\ndata: {json.dumps(complete_data)}\n\n"
+            yield f"event: chapter\ndata: {json.dumps(chapter_data)}\n\n"
 
-        except Exception as e:
-            # Send error event
-            error_data = {
-                "type": "error",
-                "error": str(e)
-            }
-            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
-
-            # Update document status
-            # NOTE: Thread safety limitation - multiple simultaneous requests to same document
-            # could cause race conditions. Production use should add locks.
-            document.status = DocumentStatus.ERROR
-            save_document(document)
+        complete_data = {"type": "complete", "total_chapters": len(chapters)}
+        yield f"event: complete\ndata: {json.dumps(complete_data)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -477,16 +475,7 @@ async def submit_job_extraction(request: Request, document_id: str):
             "message": "Document already extracted"
         }
 
-    # Submit job
-    job_id = await submit_extraction_job(
-        document_id,
-        document.file_path,
-        document.file_type.value
-    )
-
-    # Update document status
-    document.status = DocumentStatus.EXTRACTING
-    save_document(document)
+    job_id = await _ensure_extraction_job(document, join_existing=False)
 
     return {
         "job_id": job_id,

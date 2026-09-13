@@ -12,6 +12,24 @@ except ImportError:
 class RateLimiter:
     """Redis-based rate limiting with sliding window."""
 
+    _SLIDING_WINDOW_SCRIPT = """
+    for i, key in ipairs(KEYS) do
+        local offset = 3 + ((i - 1) * 3)
+        redis.call('ZREMRANGEBYSCORE', key, '-inf', ARGV[offset])
+        local current = redis.call('ZCARD', key)
+        if current >= tonumber(ARGV[offset + 1]) then
+            local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+            return {0, i, oldest[2] or '0'}
+        end
+    end
+    for i, key in ipairs(KEYS) do
+        local offset = 3 + ((i - 1) * 3)
+        redis.call('ZADD', key, ARGV[1], ARGV[2])
+        redis.call('EXPIRE', key, ARGV[offset + 2])
+    end
+    return {1, 0, '0'}
+    """
+
     def __init__(self, redis_url: Optional[str] = None):
         if redis is None:
             raise ImportError(
@@ -62,42 +80,52 @@ class RateLimiter:
         if not self._client:
             await self.initialize()
 
-        now = datetime.now(UTC)
-        window_start = now - timedelta(seconds=window)
-
-        pipe = self._client.pipeline()
-
-        # Remove old entries outside the window
-        pipe.zremrangebyscore(key, 0, window_start.timestamp())
-
-        # Count current requests
-        pipe.zcard(key)
-
-        # Add current request
-        pipe.zadd(key, {str(now.timestamp()): now.timestamp()})
-
-        # Set expiry
-        pipe.expire(key, window + 1)
-
-        results = await pipe.execute()
-        current_count = results[1]
-
-        if current_count >= limit:
-            # Get oldest request to calculate retry_after
-            oldest = await self._client.zrange(key, 0, 0, withscores=True)
-            if oldest:
-                oldest_time = oldest[0][1]
-                retry_after = int(window - (now.timestamp() - oldest_time)) + 1
+        allowed, rejected_index, retry_after = await self._check_limits(
+            [(key, limit, window)]
+        )
+        if not allowed:
+            if retry_after:
                 return False, f"Rate limit exceeded. Try again in {retry_after}s"
             return False, "Rate limit exceeded"
-
         return True, None
 
+    async def _check_limits(
+        self,
+        limits: list[tuple[str, int, int]],
+    ) -> tuple[bool, Optional[int], Optional[int]]:
+        if not self._client:
+            await self.initialize()
+
+        now = datetime.now(UTC)
+        member = f"{now.timestamp()}:{os.urandom(4).hex()}"
+        arguments = [now.timestamp(), member]
+        for _key, limit, window in limits:
+            window_start = now - timedelta(seconds=window)
+            arguments.extend((window_start.timestamp(), limit, window + 1))
+
+        allowed, rejected_index, oldest_timestamp = await self._client.eval(
+            self._SLIDING_WINDOW_SCRIPT,
+            len(limits),
+            *(key for key, _limit, _window in limits),
+            *arguments,
+        )
+
+        if not int(allowed):
+            oldest_time = float(oldest_timestamp or 0)
+            if oldest_time:
+                window = limits[int(rejected_index) - 1][2]
+                retry_after = max(1, int(window - (now.timestamp() - oldest_time)) + 1)
+                return False, int(rejected_index) - 1, retry_after
+            return False, int(rejected_index) - 1, None
+        return True, None, None
+
     async def check_tts_limits(self, ip: str) -> Tuple[bool, Optional[str]]:
-        for limit, window in ((5, 60), (20, 3600)):
-            allowed, error = await self.check_limit(f"tts:{window}:{ip}", limit, window)
-            if not allowed:
-                return False, f"{limit} TTS requests per {window // 60} minute(s) allowed. {error}"
+        limits = [(f"tts:{window}:{ip}", limit, window) for limit, window in ((5, 60), (20, 3600))]
+        allowed, rejected_index, retry_after = await self._check_limits(limits)
+        if not allowed:
+            _key, limit, window = limits[rejected_index]
+            error = f"Rate limit exceeded. Try again in {retry_after}s" if retry_after else "Rate limit exceeded"
+            return False, f"{limit} TTS requests per {window // 60} minute(s) allowed. {error}"
         return True, None
 
     async def check_upload_limits(
@@ -115,23 +143,16 @@ class RateLimiter:
         Returns:
             (allowed: bool, error_message: str | None)
         """
-        # Check per-minute limit (5 uploads/min)
-        allowed, error = await self.check_limit(
-            f"upload:1m:{ip}",
-            limit=5,
-            window=60
-        )
+        limits = [
+            (f"upload:1m:{ip}", 5, 60),
+            (f"upload:1h:{ip}", 20, 3600),
+        ]
+        allowed, rejected_index, retry_after = await self._check_limits(limits)
         if not allowed:
-            return False, f"5 uploads per minute allowed. {error}"
-
-        # Check per-hour limit (20 uploads/hour)
-        allowed, error = await self.check_limit(
-            f"upload:1h:{ip}",
-            limit=20,
-            window=3600
-        )
-        if not allowed:
-            return False, f"20 uploads per hour allowed. {error}"
+            _key, limit, window = limits[rejected_index]
+            unit = "minute" if window == 60 else "hour"
+            error = f"Rate limit exceeded. Try again in {retry_after}s" if retry_after else "Rate limit exceeded"
+            return False, f"{limit} uploads per {unit} allowed. {error}"
 
         # Check concurrent chunks if session provided
         if session_id:

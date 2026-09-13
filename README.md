@@ -45,7 +45,7 @@ docker compose --profile vieneu logs -f
 docker compose --profile vieneu down
 ```
 
-The included deployment publishes the application directly through `APP_PORT` and does not configure HTTPS. If the service is exposed publicly, configure TLS separately and set `SESSION_COOKIE_SECURE=true`.
+The included deployment binds the application to localhost through `APP_PORT` and does not configure HTTPS. If the service is exposed publicly, configure Nginx and TLS separately and set `SESSION_COOKIE_SECURE=true`.
 
 ## Configuration
 
@@ -53,12 +53,16 @@ Copy `.env.example` to `.env` and change only the values needed for the server.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `APP_PORT` | `8000` | Host port mapped to the application. |
+| `APP_PORT` | `127.0.0.1:8000` | Loopback host address and port mapped to the application. |
 | `APP_VERSION` | `v4.0.0` | Local Docker image tag and reported application version. |
+| `SESSION_SECRET` | required with HTTPS | Server-only secret used to sign browser sessions. |
 | `TTS_MAX_TEXT_LENGTH` | `100000` | Maximum characters per TTS request. |
 | `VIENEU_MAX_WORDS` | `5000` | Maximum words per VieNeu request. |
 | `TTS_MAX_QUEUE_SIZE` | `20` | Maximum queued VieNeu jobs. |
+| `LOCAL_TTS_MAX_CONCURRENT` | `2` | Maximum simultaneous Edge/gTTS jobs. |
+| `LOCAL_TTS_JOB_TIMEOUT_SECONDS` | `900` | Whole-job Edge/gTTS deadline. |
 | `UPLOAD_MAX_SIZE_MB` | `50` | Maximum PDF or EPUB upload size. |
+| `EXTRACTED_TEXT_MAX_CHARS` | `2000000` | Maximum extracted text retained per document. |
 | `VIENEU_CHUNK_SIZE` | `500` | Target VieNeu text chunk size. |
 | `VIENEU_WARMUP_ITERATIONS` | `1` | Model warmup iterations. |
 | `VIENEU_SAMPLE_RATE` | `48000` | VieNeu output sample rate. |

@@ -8,6 +8,7 @@ import sys
 import os
 import tempfile
 import shutil
+import zipfile
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -25,6 +26,7 @@ from file_processor import (
     active_sessions,
     active_documents,
     document_queue,
+    _detect_file_type,
 )
 from models import Document, FileType
 
@@ -239,3 +241,24 @@ async def test_complete_upload_rejects_content_type_mismatch():
 
     with pytest.raises(ValueError, match="File content"):
         await complete_upload(session.upload_id)
+
+
+def test_epub_archive_expansion_is_bounded(tmp_path, monkeypatch):
+    epub_path = tmp_path / "bomb.epub"
+    with zipfile.ZipFile(epub_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("chapter.xhtml", "x" * 1000)
+
+    monkeypatch.setenv("EPUB_MAX_UNCOMPRESSED_BYTES", "100")
+    with pytest.raises(ValueError, match="expanded size"):
+        _detect_file_type(str(epub_path))
+
+
+def test_small_epub_archive_remains_valid(tmp_path, monkeypatch):
+    epub_path = tmp_path / "book.epub"
+    with zipfile.ZipFile(epub_path, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("chapter.xhtml", "hello")
+
+    monkeypatch.setenv("EPUB_MAX_UNCOMPRESSED_BYTES", "1024")
+    assert _detect_file_type(str(epub_path)) == FileType.EPUB

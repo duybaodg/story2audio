@@ -156,6 +156,7 @@ Copy `.env.example` to `.env`. Never commit `.env` or real tokens.
 | `VIENEU_MAX_WORKERS` | `1` | Current model pool is single-instance |
 | `ENABLE_DEBUG_TTS` | `false` | Keeps debug endpoint unavailable |
 | `ENABLE_GLOBAL_CACHE_CLEAR` | `false` | Keeps global destructive route unavailable |
+| `SESSION_SECRET` | random 32+ character secret | Signs browser ownership sessions; keep it only in the server `.env` |
 | `SESSION_COOKIE_SECURE` | `true` with HTTPS | Protects the anonymous ownership cookie |
 | `TRUST_PROXY_HEADERS` | `true` only behind a trusted proxy | Proxy must overwrite forwarded headers and port 8000 must not be public |
 | `HF_TOKEN` | optional secret | Use a deployment secret, not an image build argument |
@@ -167,7 +168,10 @@ Copy `.env.example` to `.env`. Never commit `.env` or real tokens.
 | `TTS_MAX_TEXT_LENGTH` | `100000` | Maximum normalized characters per request |
 | `VIENEU_MAX_WORDS` | `5000` | VieNeu-specific word limit |
 | `TTS_MAX_QUEUE_SIZE` | `20` | Maximum pending VieNeu jobs |
+| `LOCAL_TTS_MAX_CONCURRENT` | `2` | Maximum concurrent Edge/gTTS jobs |
+| `LOCAL_TTS_JOB_TIMEOUT_SECONDS` | `900` | Whole-job Edge/gTTS deadline |
 | `UPLOAD_MAX_SIZE_MB` | `50` | Maximum document upload size |
+| `EXTRACTED_TEXT_MAX_CHARS` | `2000000` | Maximum retained extracted text per document |
 | `MAX_WORKERS` | Compose: `2` | Document extraction threads |
 | `JOB_TIMEOUT_MINUTES` | `30` | Cooperative extraction timeout |
 | `JOB_RETENTION_HOURS` | `24` | Extraction metadata retention |
