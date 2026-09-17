@@ -394,23 +394,6 @@ async def get_document(document_id: str, owner_session: Optional[str] = None) ->
         return None
     return document
 
-async def get_queue(owner_session: Optional[str] = None) -> List[Dict]:
-    """Get all documents in queue with their info."""
-    queue_items = []
-    for doc_id in document_queue:
-        doc = active_documents.get(doc_id)
-        if doc and (owner_session is None or doc.owner_session == owner_session):
-            queue_items.append({
-                "document_id": doc_id,
-                "filename": doc.filename,
-                "file_type": doc.file_type.value,
-                "file_size": doc.file_size,
-                "status": doc.status.value,
-                "upload_date": doc.upload_date.isoformat(),
-                "total_chapters": doc.total_chapters
-            })
-    return queue_items
-
 async def delete_document(document_id: str, owner_session: Optional[str] = None) -> bool:
     """Delete a document and its files."""
     doc = active_documents.get(document_id)

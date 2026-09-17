@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -574,8 +575,8 @@ def test_document_routes_are_isolated_by_browser_session(tmp_path):
     document_queue.append(document.document_id)
 
     try:
-        assert owner.get("/document/queue").json()["queue"][0]["document_id"] == "private-doc"
-        assert stranger.get("/document/queue").json()["queue"] == []
+        assert owner.get("/document/queue").status_code == 404
+        assert stranger.get("/document/queue").status_code == 404
         assert stranger.get("/document/private-doc").status_code == 404
         assert stranger.delete("/document/private-doc").status_code == 404
         assert owner.get("/document/private-doc").status_code == 200
@@ -639,18 +640,61 @@ def test_tts_rate_limit_blocks_request():
         del app.state.rate_limiter
 
 
-def test_forwarded_ip_is_only_used_for_trusted_proxy(monkeypatch):
+async def _client_ip_through_proxy_middleware(peer, forwarded_for, trusted_hosts):
+    resolved = {}
+
+    async def capture_client(scope, receive, send):
+        resolved["ip"] = main.get_client_ip(Request(scope))
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [(b"x-forwarded-for", forwarded_for.encode())],
+        "client": (peer, 1234),
+    }
+    middleware = ProxyHeadersMiddleware(capture_client, trusted_hosts=trusted_hosts)
+    await middleware(scope, None, None)
+    return resolved["ip"]
+
+
+@pytest.mark.asyncio
+async def test_forwarded_ip_requires_trusted_proxy():
+    assert await _client_ip_through_proxy_middleware(
+        "192.0.2.20", "198.51.100.9", ["10.0.0.0/24"]
+    ) == "192.0.2.20"
+
+
+@pytest.mark.asyncio
+async def test_forwarded_chain_uses_first_untrusted_hop():
+    assert await _client_ip_through_proxy_middleware(
+        "10.0.0.2",
+        "198.51.100.99, 203.0.113.7, 10.0.0.3",
+        ["10.0.0.0/24"],
+    ) == "203.0.113.7"
+
+
+@pytest.mark.asyncio
+async def test_malformed_forwarded_ip_uses_one_fail_closed_key():
+    assert await _client_ip_through_proxy_middleware(
+        "10.0.0.2", "not-an-ip", ["10.0.0.0/24"]
+    ) == "unknown"
+
+
+def test_client_ip_is_canonicalized():
     request = Request({
         "type": "http",
         "method": "GET",
         "path": "/",
-        "headers": [(b"x-forwarded-for", b"203.0.113.10")],
-        "client": ("127.0.0.1", 1234),
+        "headers": [],
+        "client": ("2001:0db8:0:0:0:0:0:1", 1234),
     })
-    monkeypatch.setattr(main, "TRUST_PROXY_HEADERS", False)
-    assert main.get_client_ip(request) == "127.0.0.1"
-    monkeypatch.setattr(main, "TRUST_PROXY_HEADERS", True)
-    assert main.get_client_ip(request) == "203.0.113.10"
+    assert main.get_client_ip(request) == "2001:db8::1"
+
+
+def test_compose_origin_is_loopback_only():
+    compose = (Path(__file__).parents[1] / "docker-compose.yml").read_text()
+    assert 'host_ip: "127.0.0.1"' in compose
 
 
 def test_health_fails_when_redis_is_unavailable(monkeypatch):

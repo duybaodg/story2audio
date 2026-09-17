@@ -47,7 +47,7 @@ services:
       VIENEU_CHUNK_SIZE: "${VIENEU_CHUNK_SIZE:-500}"
       # Redis connection for rate limiting
       REDIS_URL: "redis://redis:6379"
-      TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-}"
       SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
       HEALTHCHECK_TOKEN: "${HEALTHCHECK_TOKEN:-}"
       TTS_MAX_TEXT_LENGTH: "${TTS_MAX_TEXT_LENGTH:-100000}"
@@ -64,7 +64,10 @@ services:
       # Get free token at: https://huggingface.co/settings/tokens
       HF_TOKEN: "${HF_TOKEN:-}"
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - target: 8000
+        published: "${ORIGIN_PORT:?Set ORIGIN_PORT to a numeric host port; APP_PORT is no longer supported}"
+        host_ip: "127.0.0.1"
+        protocol: tcp
     volumes:
       - ebook2audio_cache:/app/audio_cache
       - ebook2audio_documents:/app/documents

@@ -109,11 +109,26 @@ sed -i.bak "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/; s/^HEA
 
 Do not store either secret in GitHub; they belong only in the server `.env`.
 
-For direct access on port 8000, keep:
+When upgrading an existing deployment, migrate these names before deploying;
+Compose deliberately rejects the old port variable instead of silently exposing
+or moving the origin:
 
 ```env
-APP_PORT=8000
-TRUST_PROXY_HEADERS=false
+# old: APP_PORT=127.0.0.1:8000
+ORIGIN_PORT=8000
+# old: TRUST_PROXY_HEADERS=true
+FORWARDED_ALLOW_IPS=
+```
+
+Remove the two old variables after copying the numeric port. Keep
+`FORWARDED_ALLOW_IPS` empty for the first start and for SSH-tunnel-only deployments;
+step 7 shows how to set the exact proxy peer IP for Nginx.
+
+For private access through an SSH tunnel, keep:
+
+```env
+ORIGIN_PORT=8000
+FORWARDED_ALLOW_IPS=
 SESSION_COOKIE_SECURE=false
 ```
 
@@ -122,13 +137,17 @@ Optionally add `HF_TOKEN` to reduce anonymous Hugging Face download limitations.
 For the public Nginx/HTTPS deployment, use:
 
 ```env
-APP_PORT=127.0.0.1:8000
-TRUST_PROXY_HEADERS=true
+ORIGIN_PORT=8000
+FORWARDED_ALLOW_IPS=
 SESSION_COOKIE_SECURE=true
 ENABLE_GLOBAL_CACHE_CLEAR=false
 ```
 
-Nginx must overwrite `X-Forwarded-For` with the connecting client address. The
+Leave the proxy list empty for the first start, then use the exact Docker bridge
+gateway IP reported in step 7—not a broad private network and never `*`. CIDRs,
+when used, must be canonical (for example,
+`10.0.0.0/24`, not `10.0.0.2/24`). Nginx must overwrite `X-Forwarded-For` with
+the connecting client address. The
 application will refuse to start with secure cookies if `SESSION_SECRET` is
 missing, too short, or still contains the example value.
 
@@ -139,7 +158,8 @@ missing, too short, or still contains the example value.
 This is the safer option when only you need access. Set:
 
 ```env
-APP_PORT=127.0.0.1:8000
+ORIGIN_PORT=8000
+FORWARDED_ALLOW_IPS=
 ```
 
 After starting the stack, open a tunnel from your computer:
@@ -150,17 +170,23 @@ ssh -p SSH_PORT -L 8000:127.0.0.1:8000 DEPLOY_USER@SERVER_IP
 
 Then open `http://127.0.0.1:8000` locally.
 
-### Direct public HTTP access
+### Public HTTPS through Nginx
 
-Keep `APP_PORT=8000`, allow TCP port 8000 in the hosting provider's network firewall, and open:
+Compose always publishes the origin as `127.0.0.1:ORIGIN_PORT`; it cannot be exposed
+directly on a public interface. Configure Nginx to proxy to that loopback address
+and replace, rather than append, the forwarded client address:
 
-```text
-http://SERVER_IP:8000
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_buffering off;
+}
 ```
 
-This connection is unencrypted. Do not upload sensitive documents over public HTTP.
-
-Docker-published ports can bypass ordinary UFW rules. Use the hosting provider firewall or correctly configured Docker firewall rules when restricting port 8000. See Docker's [firewall documentation](https://docs.docker.com/engine/network/packet-filtering-firewalls/).
+Terminate TLS at Nginx and expose only ports 80/443 publicly.
 
 Always ensure the SSH port is allowed before changing or enabling a firewall, or you can lock yourself out of the server.
 
@@ -172,6 +198,20 @@ On the server:
 cd "/home/DEPLOY_USER/story2audio"
 docker compose --profile vieneu config --quiet
 docker compose --profile vieneu up -d --build --wait
+```
+
+Verify the origin bind and identify the exact peer address used by host Nginx:
+
+```bash
+docker compose port app 8000
+docker inspect ebook2audio --format '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}'
+```
+
+The first command must print `127.0.0.1:8000`. For Nginx, put the second
+command's single IP into `FORWARDED_ALLOW_IPS` in `.env`, then recreate the app:
+
+```bash
+docker compose up -d --force-recreate app
 ```
 
 The first VieNeu start downloads and warms the model, so it can take several minutes. Watch progress in another SSH session:

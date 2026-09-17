@@ -12,7 +12,6 @@ from file_processor import (
     complete_upload,
     get_expected_chunk_size,
     get_document,
-    get_queue,
     delete_document,
     save_document,
     active_sessions,
@@ -241,13 +240,6 @@ async def upload_complete(request: Request, upload_id: str = Form(...)):
         raise HTTPException(status_code=507, detail="Upload storage error")
     except Exception:
         raise HTTPException(status_code=500, detail="Upload completion failed")
-
-@router.get("/queue")
-async def get_document_queue(request: Request):
-    """
-    Get all documents in the upload queue.
-    """
-    return {"queue": await get_queue(_session_id(request))}
 
 @router.get("/{document_id}")
 async def get_document_info(request: Request, document_id: str):

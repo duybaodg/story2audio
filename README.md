@@ -24,7 +24,7 @@ sed -i.bak "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/; s/^HEA
 docker compose --profile vieneu up -d --build --wait
 ```
 
-Open `http://SERVER_IP:8000`. Change `APP_PORT` in `.env` if port `8000` is unavailable.
+Open `http://127.0.0.1:8000` on the Docker host, or use an SSH tunnel. Public access must go through an HTTPS reverse proxy.
 
 The stack contains:
 
@@ -46,7 +46,7 @@ docker compose --profile vieneu logs -f
 docker compose --profile vieneu down
 ```
 
-The included deployment binds the application to localhost through `APP_PORT` and does not configure HTTPS. If the service is exposed publicly, configure Nginx and TLS separately and set `SESSION_COOKIE_SECURE=true`.
+The included deployment binds the application to localhost through `ORIGIN_PORT` and does not configure HTTPS. If the service is exposed publicly, configure Nginx and TLS separately and set `SESSION_COOKIE_SECURE=true`.
 
 ## Configuration
 
@@ -54,7 +54,7 @@ Copy `.env.example` to `.env` and change only the values needed for the server.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `APP_PORT` | `127.0.0.1:8000` | Loopback host address and port mapped to the application. |
+| `ORIGIN_PORT` | required (`8000` in `.env.example`) | Host port; Compose always binds it to `127.0.0.1`. |
 | `APP_VERSION` | `v4.0.0` | Local Docker image tag and reported application version. |
 | `SESSION_SECRET` | required with HTTPS | Server-only secret used to sign browser sessions. |
 | `HEALTHCHECK_TOKEN` | derived from `SESSION_SECRET` | Optional dedicated token used by internal health probes. Minimum 32 characters. |
@@ -70,7 +70,7 @@ Copy `.env.example` to `.env` and change only the values needed for the server.
 | `VIENEU_SAMPLE_RATE` | `48000` | VieNeu output sample rate. |
 | `HF_TOKEN` | empty | Optional Hugging Face access token. |
 | `PROXY` | empty | Optional outbound HTTP proxy. |
-| `TRUST_PROXY_HEADERS` | `false` | Trust forwarded client IP headers only when supplied by trusted infrastructure. |
+| `FORWARDED_ALLOW_IPS` | empty | Exact reverse-proxy IPs/CIDRs allowed to supply forwarded client IPs. Never use `*`. |
 | `SESSION_COOKIE_SECURE` | `false` | Send session cookies only over HTTPS. |
 | `ENABLE_GLOBAL_CACHE_CLEAR` | `false` | Enable the global cache-clear endpoint. Keep disabled normally. |
 
@@ -112,7 +112,7 @@ Requirements: Python 3.13, `uv`, Redis, and Node.js for the JavaScript syntax ch
 
 ```bash
 uv sync
-uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload --forwarded-allow-ips ""
 ```
 
 Run the VieNeu worker separately when needed:
