@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # Set environment variable before importing module
 os.environ['DOCUMENT_STORAGE_PATH'] = tempfile.mkdtemp()
 
+import file_processor
 from file_processor import (
     initiate_upload,
     receive_chunk,
@@ -27,6 +28,7 @@ from file_processor import (
     active_documents,
     document_queue,
     _detect_file_type,
+    StorageQuotaExceeded,
 )
 from models import Document, FileType
 
@@ -138,6 +140,45 @@ async def test_upload_size_limit():
             checksum="0" * 32
         )
 
+
+@pytest.mark.asyncio
+async def test_upload_rejected_when_global_storage_quota_would_be_exceeded(monkeypatch):
+    monkeypatch.setenv("RUNTIME_STORAGE_QUOTA_GB", "1")
+    monkeypatch.setattr(file_processor, "get_runtime_storage_usage_bytes", lambda: (1024 ** 3) - 1)
+    monkeypatch.setattr(file_processor, "_runtime_filesystem_free_bytes", lambda: 10 * 1024 ** 3)
+
+    with pytest.raises(StorageQuotaExceeded, match="giới hạn lưu trữ"):
+        await initiate_upload("quota.pdf", 1, "0" * 32)
+
+
+@pytest.mark.asyncio
+async def test_upload_rejected_when_minimum_free_space_would_be_crossed(monkeypatch):
+    monkeypatch.setenv("RUNTIME_STORAGE_QUOTA_GB", "10")
+    monkeypatch.setenv("RUNTIME_STORAGE_MIN_FREE_GB", "2")
+    monkeypatch.setattr(file_processor, "get_runtime_storage_usage_bytes", lambda: 0)
+    monkeypatch.setattr(
+        file_processor,
+        "_runtime_filesystem_free_bytes",
+        lambda: (2 * 1024 ** 3) + 1,
+    )
+
+    with pytest.raises(StorageQuotaExceeded, match="giới hạn lưu trữ"):
+        await initiate_upload("reserve.pdf", 1, "0" * 32)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_upload_does_not_require_another_reservation(monkeypatch):
+    session = await initiate_upload("duplicate-quota.pdf", 1, "1" * 32)
+    monkeypatch.setattr(
+        file_processor,
+        "_ensure_storage_capacity",
+        lambda _additional: (_ for _ in ()).throw(StorageQuotaExceeded("should not run")),
+    )
+
+    duplicate = await initiate_upload("duplicate-quota.pdf", 1, "1" * 32)
+
+    assert duplicate.upload_id == session.upload_id
+
 @pytest.mark.asyncio
 async def test_missing_chunks():
     session = await initiate_upload(
@@ -170,6 +211,34 @@ async def test_cleanup_expired_documents():
 
     # Verify expired doc removed
     assert "expired-doc" not in active_documents
+
+
+@pytest.mark.asyncio
+async def test_recovered_legacy_document_is_clamped_to_six_hour_retention():
+    now = datetime.now(UTC)
+    document_dir = Path(os.environ['DOCUMENT_STORAGE_PATH']) / "assembled" / "legacy-doc"
+    document_dir.mkdir(parents=True)
+    document_path = document_dir / "legacy.pdf"
+    document_path.write_bytes(b"%PDF-1.4\n")
+    document = Document(
+        document_id="legacy-doc",
+        filename="legacy.pdf",
+        file_type=FileType.PDF,
+        file_size=document_path.stat().st_size,
+        file_path=str(document_path),
+        upload_date=now - timedelta(hours=7),
+        expires_at=now + timedelta(hours=5),
+    )
+    file_processor.save_document(document)
+    active_documents.clear()
+
+    assert file_processor.recover_documents() == 1
+    assert active_documents["legacy-doc"].expires_at <= document.upload_date + timedelta(hours=6)
+
+    await cleanup_expired_sessions()
+
+    assert "legacy-doc" not in active_documents
+    assert not document_dir.exists()
 
 
 @pytest.mark.asyncio

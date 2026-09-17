@@ -48,6 +48,26 @@ def test_upload_initiate():
     assert "chunk_size" in data
     assert data["status"] == "initiated"
 
+
+def test_upload_quota_error_is_visible_to_client(monkeypatch):
+    async def reject_upload(*_args, **_kwargs):
+        raise document_api.StorageQuotaExceeded("Máy chủ đang gần giới hạn lưu trữ.")
+
+    monkeypatch.setattr(document_api, "initiate_upload", reject_upload)
+    response = client.post(
+        "/document/upload/initiate",
+        data={"filename": "full.pdf", "file_size": 1, "checksum": "0" * 32},
+    )
+
+    assert response.status_code == 507
+    assert response.json()["detail"] == "Máy chủ đang gần giới hạn lưu trữ."
+
+
+def test_frontend_preserves_chunk_quota_error():
+    source = (Path(__file__).parents[1] / "static" / "app.js").read_text()
+    assert "payload.detail" in source
+    assert "error.status === 507" in source
+
 def test_upload_chunk():
     # First initiate
     initiate_response = client.post(
@@ -461,11 +481,11 @@ def test_cleanup_old_audio_cache_removes_expired_files(monkeypatch, tmp_path):
     with open(srt_path, "w", encoding="utf-8") as f:
         f.write("subtitle")
 
-    old_time = time.time() - (13 * 3600)
+    old_time = time.time() - (7 * 3600)
     for path in (main.get_meta_path(cache_id), audio_path, srt_path):
         os.utime(path, (old_time, old_time))
 
-    assert main.cleanup_old_audio_cache(retention_hours=12) == 3
+    assert main.cleanup_old_audio_cache() == 3
     assert not os.path.exists(audio_path)
     assert not os.path.exists(srt_path)
     assert not os.path.exists(main.get_meta_path(cache_id))
@@ -695,6 +715,9 @@ def test_client_ip_is_canonicalized():
 def test_compose_origin_is_loopback_only():
     compose = (Path(__file__).parents[1] / "docker-compose.yml").read_text()
     assert 'host_ip: "127.0.0.1"' in compose
+    assert 'published: "${ORIGIN_PORT:-8000}"' in compose
+    assert 'UPLOAD_SESSION_EXPIRY_HOURS: "${UPLOAD_SESSION_EXPIRY_HOURS:-6}"' in compose
+    assert 'AUDIO_CACHE_RETENTION_HOURS: "${AUDIO_CACHE_RETENTION_HOURS:-6}"' in compose
 
 
 def test_health_fails_when_redis_is_unavailable(monkeypatch):

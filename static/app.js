@@ -688,7 +688,10 @@
             });
 
             if (!response.ok) {
-                throw new Error(`Không thể tải chunk ${chunkNumber + 1}`);
+                const payload = await response.json().catch(() => ({}));
+                const error = new Error(payload.detail || `Không thể tải chunk ${chunkNumber + 1}`);
+                error.status = response.status;
+                throw error;
             }
 
             return await response.json();
@@ -719,9 +722,12 @@
                             break;
                         }
                     } catch (error) {
+                        if (error.status === 507) {
+                            throw error;
+                        }
                         retries++;
                         if (retries >= MAX_RETRIES) {
-                            throw new Error(`Không thể tải chunk ${i + 1} sau ${MAX_RETRIES} lần thử`);
+                            throw error;
                         }
                         // Wait before retry (exponential backoff)
                         await new Promise(resolve => setTimeout(resolve, 1000 * retries));

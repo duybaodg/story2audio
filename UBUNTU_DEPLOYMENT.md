@@ -109,9 +109,8 @@ sed -i.bak "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/; s/^HEA
 
 Do not store either secret in GitHub; they belong only in the server `.env`.
 
-When upgrading an existing deployment, migrate these names before deploying;
-Compose deliberately rejects the old port variable instead of silently exposing
-or moving the origin:
+When upgrading an existing deployment, migrate these names. If `ORIGIN_PORT` is
+missing, Compose safely uses port `8000` and still binds only to `127.0.0.1`:
 
 ```env
 # old: APP_PORT=127.0.0.1:8000

@@ -15,7 +15,8 @@ from file_processor import (
     delete_document,
     save_document,
     active_sessions,
-    active_documents
+    active_documents,
+    StorageQuotaExceeded,
 )
 from job_queue import (
     submit_extraction_job,
@@ -159,6 +160,8 @@ async def upload_initiate(
             "chunk_size": session.chunk_size,
             "status": "initiated"
         }
+    except StorageQuotaExceeded as e:
+        raise HTTPException(status_code=507, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except OSError:
@@ -200,6 +203,8 @@ async def upload_chunk(
             "total_chunks": expected_chunks,
             "next_chunk": chunk_number + 1 if received_count < expected_chunks else None
         }
+    except StorageQuotaExceeded as e:
+        raise HTTPException(status_code=507, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
@@ -234,6 +239,8 @@ async def upload_complete(request: Request, upload_id: str = Form(...)):
             "status": document.status.value,
             "message": "Upload complete, extraction starting"
         }
+    except StorageQuotaExceeded as e:
+        raise HTTPException(status_code=507, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except OSError:

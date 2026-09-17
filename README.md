@@ -54,7 +54,7 @@ Copy `.env.example` to `.env` and change only the values needed for the server.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ORIGIN_PORT` | required (`8000` in `.env.example`) | Host port; Compose always binds it to `127.0.0.1`. |
+| `ORIGIN_PORT` | `8000` | Host port; Compose always binds it to `127.0.0.1`. |
 | `APP_VERSION` | `v4.0.0` | Local Docker image tag and reported application version. |
 | `SESSION_SECRET` | required with HTTPS | Server-only secret used to sign browser sessions. |
 | `HEALTHCHECK_TOKEN` | derived from `SESSION_SECRET` | Optional dedicated token used by internal health probes. Minimum 32 characters. |
@@ -64,6 +64,10 @@ Copy `.env.example` to `.env` and change only the values needed for the server.
 | `LOCAL_TTS_MAX_CONCURRENT` | `2` | Maximum simultaneous Edge/gTTS jobs. |
 | `LOCAL_TTS_JOB_TIMEOUT_SECONDS` | `900` | Whole-job Edge/gTTS deadline. |
 | `UPLOAD_MAX_SIZE_MB` | `50` | Maximum PDF or EPUB upload size. |
+| `RUNTIME_STORAGE_QUOTA_GB` | `10` | Combined quota for documents, audio cache, and extraction jobs. |
+| `RUNTIME_STORAGE_MIN_FREE_GB` | `2` | Minimum free disk space preserved when accepting uploads. |
+| `UPLOAD_SESSION_EXPIRY_HOURS` | `6` | Uploaded file and incomplete-session retention. |
+| `AUDIO_CACHE_RETENTION_HOURS` | `6` | Completed/failed audio cache retention. |
 | `EXTRACTED_TEXT_MAX_CHARS` | `2000000` | Maximum extracted text retained per document. |
 | `VIENEU_CHUNK_SIZE` | `500` | Target VieNeu text chunk size. |
 | `VIENEU_WARMUP_ITERATIONS` | `1` | Model warmup iterations. |

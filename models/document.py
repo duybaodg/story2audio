@@ -4,6 +4,7 @@ from typing import Optional, Dict, Set, Any
 from pydantic import BaseModel, Field
 from enum import Enum
 import uuid
+import os
 
 class DocumentStatus(str, Enum):
     UPLOADING = "uploading"
@@ -37,7 +38,11 @@ class Document(BaseModel):
     file_type: FileType
     file_size: int
     upload_date: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    expires_at: datetime = Field(default_factory=lambda: datetime.now(UTC) + timedelta(hours=12))
+    expires_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC) + timedelta(
+            hours=int(os.getenv("UPLOAD_SESSION_EXPIRY_HOURS", "6"))
+        )
+    )
     status: DocumentStatus = DocumentStatus.UPLOADING
     total_pages: Optional[int] = None
     total_chapters: Optional[int] = None
