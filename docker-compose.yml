@@ -38,8 +38,10 @@ services:
       MAX_WORKERS: "2"
       JOB_TIMEOUT_MINUTES: "30"
       JOB_RETENTION_HOURS: "24"
-      UPLOAD_SESSION_EXPIRY_HOURS: "12"
-      AUDIO_CACHE_RETENTION_HOURS: "12"
+      UPLOAD_SESSION_EXPIRY_HOURS: "${UPLOAD_SESSION_EXPIRY_HOURS:-6}"
+      AUDIO_CACHE_RETENTION_HOURS: "${AUDIO_CACHE_RETENTION_HOURS:-6}"
+      RUNTIME_STORAGE_QUOTA_GB: "${RUNTIME_STORAGE_QUOTA_GB:-10}"
+      RUNTIME_STORAGE_MIN_FREE_GB: "${RUNTIME_STORAGE_MIN_FREE_GB:-2}"
       # Web process should not load the heavy VieNeu model. The worker owns it.
       VIENEU_INIT_IN_WEB: "false"
       VIENEU_MAX_WORKERS: "1"
@@ -65,7 +67,7 @@ services:
       HF_TOKEN: "${HF_TOKEN:-}"
     ports:
       - target: 8000
-        published: "${ORIGIN_PORT:?Set ORIGIN_PORT to a numeric host port; APP_PORT is no longer supported}"
+        published: "${ORIGIN_PORT:-8000}"
         host_ip: "127.0.0.1"
         protocol: tcp
     volumes:

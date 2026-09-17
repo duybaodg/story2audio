@@ -7,22 +7,45 @@ import asyncio
 import json
 import re
 import zipfile
+import tempfile
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, UTC
 from typing import Dict, Optional, List
 from pathlib import Path
 from models import UploadSession, Document, FileType
 import logging
 
+try:
+    import fcntl
+except ImportError:  # Windows development; production containers are Linux.
+    fcntl = None
+
 logger = logging.getLogger(__name__)
 
 _CHECKSUM_RE = re.compile(r"^[a-f0-9]{32}$")
+_GIB = 1024 ** 3
+_DOCUMENT_METADATA_RESERVE_BYTES = 1024 * 1024
+_STORAGE_LIMIT_MESSAGE = (
+    "Máy chủ đang gần giới hạn lưu trữ. "
+    "Vui lòng thử lại sau khi dữ liệu cũ được dọn dẹp."
+)
+
+
+class StorageQuotaExceeded(OSError):
+    """Raised when accepting more upload data would exceed safe storage limits."""
+
+
+_storage_thread_lock = threading.Lock()
 
 def _get_config():
     """Get configuration from environment variables."""
     return {
         'UPLOAD_MAX_SIZE_MB': int(os.getenv("UPLOAD_MAX_SIZE_MB", "50")),
         'UPLOAD_CHUNK_SIZE': int(os.getenv("UPLOAD_CHUNK_SIZE", "5242880")),  # 5MB
-        'UPLOAD_SESSION_EXPIRY_HOURS': int(os.getenv("UPLOAD_SESSION_EXPIRY_HOURS", "12")),
+        'UPLOAD_SESSION_EXPIRY_HOURS': int(os.getenv("UPLOAD_SESSION_EXPIRY_HOURS", "6")),
+        'RUNTIME_STORAGE_QUOTA_GB': max(1, int(os.getenv("RUNTIME_STORAGE_QUOTA_GB", "10"))),
+        'RUNTIME_STORAGE_MIN_FREE_GB': max(1, int(os.getenv("RUNTIME_STORAGE_MIN_FREE_GB", "2"))),
         'DOCUMENT_STORAGE_PATH': os.getenv("DOCUMENT_STORAGE_PATH", "/app/documents"),
         'EPUB_MAX_ENTRIES': int(os.getenv("EPUB_MAX_ENTRIES", "1000")),
         'EPUB_MAX_ENTRY_BYTES': int(os.getenv("EPUB_MAX_ENTRY_BYTES", str(50 * 1024 * 1024))),
@@ -70,6 +93,8 @@ def recover_documents() -> int:
             with open(path, "r", encoding="utf-8") as f:
                 document = Document(**json.load(f))
             if os.path.isfile(document.file_path):
+                retention = timedelta(hours=_get_config()['UPLOAD_SESSION_EXPIRY_HOURS'])
+                document.expires_at = min(document.expires_at, document.upload_date + retention)
                 active_documents[document.document_id] = document
                 recovered.append(document)
         except (OSError, ValueError, json.JSONDecodeError):
@@ -89,6 +114,93 @@ def _ensure_directories():
     paths = _get_storage_paths()
     for directory in paths.values():
         os.makedirs(directory, exist_ok=True)
+
+
+def _runtime_storage_roots() -> List[str]:
+    base_dir = Path(__file__).resolve().parent
+    return [
+        _get_config()['DOCUMENT_STORAGE_PATH'],
+        str(base_dir / "audio_cache"),
+        os.getenv("JOBS_DIR", "./jobs"),
+    ]
+
+
+def _directory_size(path: str) -> int:
+    total = 0
+    pending = [path]
+    while pending:
+        current = pending.pop()
+        try:
+            entries = list(os.scandir(current))
+        except FileNotFoundError:
+            continue
+        for entry in entries:
+            if entry.is_symlink():
+                continue
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(entry.path)
+                elif entry.is_file(follow_symlinks=False):
+                    total += entry.stat(follow_symlinks=False).st_size
+            except FileNotFoundError:
+                continue
+    return total
+
+
+def get_runtime_storage_usage_bytes() -> int:
+    """Return generated document, audio-cache, and job bytes across runtime roots."""
+    roots = {os.path.realpath(path) for path in _runtime_storage_roots()}
+    return sum(_directory_size(path) for path in roots)
+
+
+def _runtime_filesystem_free_bytes() -> int:
+    paths = [*_runtime_storage_roots(), tempfile.gettempdir()]
+    free_by_device = {}
+    for path in paths:
+        probe = path
+        while not os.path.exists(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
+        device = os.stat(probe).st_dev
+        free_by_device[device] = shutil.disk_usage(probe).free
+    return min(free_by_device.values())
+
+
+def _active_upload_headroom_bytes() -> int:
+    headroom = 0
+    for session in active_sessions.values():
+        uploaded = min(session.total_size, _directory_size(session.temp_dir))
+        headroom += (session.total_size - uploaded) + session.total_size
+    return headroom
+
+
+def _ensure_storage_capacity(additional_bytes: int) -> None:
+    config = _get_config()
+    quota = config['RUNTIME_STORAGE_QUOTA_GB'] * _GIB
+    minimum_free = config['RUNTIME_STORAGE_MIN_FREE_GB'] * _GIB
+    if get_runtime_storage_usage_bytes() + additional_bytes > quota:
+        raise StorageQuotaExceeded(_STORAGE_LIMIT_MESSAGE)
+    if _runtime_filesystem_free_bytes() - additional_bytes < minimum_free:
+        raise StorageQuotaExceeded(_STORAGE_LIMIT_MESSAGE)
+
+
+@contextmanager
+def storage_write_guard(additional_bytes: int):
+    """Serialize quota check+write across the web process and VieNeu worker."""
+    lock_dir = str(Path(__file__).resolve().parent / "audio_cache")
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, ".storage-quota.lock")
+    with _storage_thread_lock, open(lock_path, "a+b") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            _ensure_storage_capacity(additional_bytes)
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def _normalize_filename(filename: str) -> str:
@@ -228,6 +340,9 @@ async def initiate_upload(
         ):
             return session
 
+    with storage_write_guard(_active_upload_headroom_bytes() + (2 * file_size)):
+        pass
+
     upload_id = str(uuid.uuid4())
     temp_dir = os.path.join(paths['UPLOADS_DIR'], upload_id)
     os.makedirs(temp_dir, exist_ok=True)
@@ -299,13 +414,15 @@ async def receive_chunk(
         except OSError:
             pass
 
-    # Ensure temp directory exists
-    os.makedirs(session.temp_dir, exist_ok=True)
-    try:
-        with open(chunk_path, "wb") as f:
-            f.write(chunk_data)
-    except OSError as e:
-        raise ValueError(f"Failed to write chunk {chunk_number}: {e}")
+    with storage_write_guard(len(chunk_data)):
+        # Ensure temp directory exists
+        os.makedirs(session.temp_dir, exist_ok=True)
+        try:
+            with open(chunk_path, "wb") as f:
+                f.write(chunk_data)
+        except OSError:
+            _remove_file(chunk_path)
+            raise
 
     session.received_chunks.add(chunk_number)
 
@@ -331,61 +448,57 @@ async def complete_upload(upload_id: str) -> Document:
     if missing_chunks:
         raise ValueError(f"Missing chunks: {sorted(missing_chunks)}")
 
-    # Assemble chunks
-    assembled_path = os.path.join(paths['ASSEMBLED_DIR'], f"{upload_id}.temp")
-    file_checksum = hashlib.md5()
+    with storage_write_guard(session.total_size + _DOCUMENT_METADATA_RESERVE_BYTES):
+        # Assemble chunks while the shared cache worker cannot consume the reservation.
+        assembled_path = os.path.join(paths['ASSEMBLED_DIR'], f"{upload_id}.temp")
+        file_checksum = hashlib.md5()
 
-    try:
-        with open(assembled_path, "wb") as outfile:
-            for i in range(expected_chunks):
-                chunk_path = os.path.join(session.temp_dir, f"chunk_{i}")
-                with open(chunk_path, "rb") as infile:
-                    chunk_data = infile.read()
-                    outfile.write(chunk_data)
-                    file_checksum.update(chunk_data)
+        try:
+            with open(assembled_path, "wb") as outfile:
+                for i in range(expected_chunks):
+                    chunk_path = os.path.join(session.temp_dir, f"chunk_{i}")
+                    with open(chunk_path, "rb") as infile:
+                        chunk_data = infile.read()
+                        outfile.write(chunk_data)
+                        file_checksum.update(chunk_data)
 
-        # Verify checksum
-        calculated_checksum = file_checksum.hexdigest()
-        if calculated_checksum != session.checksum:
-            raise ValueError(
-                f"Checksum mismatch: expected {session.checksum}, "
-                f"got {calculated_checksum}"
-            )
+            calculated_checksum = file_checksum.hexdigest()
+            if calculated_checksum != session.checksum:
+                raise ValueError(
+                    f"Checksum mismatch: expected {session.checksum}, "
+                    f"got {calculated_checksum}"
+                )
 
-        # Determine file type from extension and verify content matches.
-        ext = Path(session.filename).suffix.lower().lstrip(".")
-        file_type = FileType(ext)
-        detected_type = _detect_file_type(assembled_path)
-        if detected_type != file_type:
-            raise ValueError("File content does not match file extension")
+            ext = Path(session.filename).suffix.lower().lstrip(".")
+            file_type = FileType(ext)
+            detected_type = _detect_file_type(assembled_path)
+            if detected_type != file_type:
+                raise ValueError("File content does not match file extension")
 
-        # Create document
-        final_path = os.path.join(paths['ASSEMBLED_DIR'], upload_id, session.filename)
-        os.makedirs(os.path.dirname(final_path), exist_ok=True)
-        shutil.move(assembled_path, final_path)
-    except Exception:
-        _remove_file(assembled_path)
-        raise
+            final_path = os.path.join(paths['ASSEMBLED_DIR'], upload_id, session.filename)
+            os.makedirs(os.path.dirname(final_path), exist_ok=True)
+            shutil.move(assembled_path, final_path)
+        except Exception:
+            _remove_file(assembled_path)
+            raise
 
-    document = Document(
-        document_id=upload_id,
-        filename=session.filename,
-        file_type=file_type,
-        file_size=session.total_size,
-        file_path=final_path,
-        owner_session=session.owner_session,
-        metadata={"checksum": session.checksum}
-    )
+        document = Document(
+            document_id=upload_id,
+            filename=session.filename,
+            file_type=file_type,
+            file_size=session.total_size,
+            file_path=final_path,
+            owner_session=session.owner_session,
+            metadata={"checksum": session.checksum}
+        )
 
-    active_documents[upload_id] = document
-    document_queue.append(upload_id)  # Add to queue
-    save_document(document)
-    del active_sessions[upload_id]
+        active_documents[upload_id] = document
+        document_queue.append(upload_id)
+        save_document(document)
+        del active_sessions[upload_id]
+        shutil.rmtree(session.temp_dir, ignore_errors=True)
 
-    # Clean up temp directory
-    shutil.rmtree(session.temp_dir, ignore_errors=True)
-
-    return document
+        return document
 
 async def get_document(document_id: str, owner_session: Optional[str] = None) -> Optional[Document]:
     """Get document by ID."""

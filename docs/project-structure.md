@@ -172,12 +172,14 @@ Copy `.env.example` to `.env`. Never commit `.env` or real tokens.
 | `LOCAL_TTS_MAX_CONCURRENT` | `2` | Maximum concurrent Edge/gTTS jobs |
 | `LOCAL_TTS_JOB_TIMEOUT_SECONDS` | `900` | Whole-job Edge/gTTS deadline |
 | `UPLOAD_MAX_SIZE_MB` | `50` | Maximum document upload size |
+| `RUNTIME_STORAGE_QUOTA_GB` | `10` | Combined limit for documents, audio cache, and extraction jobs |
+| `RUNTIME_STORAGE_MIN_FREE_GB` | `2` | Free-space reserve maintained while accepting uploads |
 | `EXTRACTED_TEXT_MAX_CHARS` | `2000000` | Maximum retained extracted text per document |
 | `MAX_WORKERS` | Compose: `2` | Document extraction threads |
 | `JOB_TIMEOUT_MINUTES` | `30` | Cooperative extraction timeout |
 | `JOB_RETENTION_HOURS` | `24` | Extraction metadata retention |
-| `UPLOAD_SESSION_EXPIRY_HOURS` | `12` | Upload/document expiry window |
-| `AUDIO_CACHE_RETENTION_HOURS` | `12` | Audio cache retention |
+| `UPLOAD_SESSION_EXPIRY_HOURS` | `6` | Upload/document expiry window |
+| `AUDIO_CACHE_RETENTION_HOURS` | `6` | Audio cache retention |
 
 ## API Summary
 

@@ -35,6 +35,7 @@ from rate_limiter import RateLimiter
 import edge_tts
 from dotenv import load_dotenv
 from document_api import router as document_router
+from file_processor import storage_write_guard
 
 # Audio quality imports
 from vieneu_audio_quality import (
@@ -301,7 +302,7 @@ VIENEU_MAX_WORKERS = get_pool_size()
 TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS = int(os.getenv("TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS", "300"))
 VIENEU_INIT_IN_WEB = os.getenv("VIENEU_INIT_IN_WEB", "").lower() in {"1", "true", "yes"}
 ENABLE_GLOBAL_CACHE_CLEAR = os.getenv("ENABLE_GLOBAL_CACHE_CLEAR", "").lower() in {"1", "true", "yes"}
-AUDIO_CACHE_RETENTION_HOURS = int(os.getenv("AUDIO_CACHE_RETENTION_HOURS", "12"))
+AUDIO_CACHE_RETENTION_HOURS = int(os.getenv("AUDIO_CACHE_RETENTION_HOURS", "6"))
 TTS_MAX_TEXT_LENGTH = int(os.getenv("TTS_MAX_TEXT_LENGTH", "100000"))
 VIENEU_MAX_WORDS = int(os.getenv("VIENEU_MAX_WORDS", "5000"))
 VIENEU_CHUNK_SIZE = int(os.getenv("VIENEU_CHUNK_SIZE", "500"))
@@ -843,17 +844,18 @@ def finalize_mp3(audio_path: str) -> None:
     """Rewrite appended MP3 chunks as one stream with correct duration metadata."""
     output_path = f"{audio_path}.finalizing"
     try:
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-i", audio_path, "-map", "0:a:0", "-c:a", "copy",
-                "-write_xing", "1", "-f", "mp3", output_path,
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-        os.replace(output_path, audio_path)
+        with storage_write_guard(os.path.getsize(audio_path)):
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", audio_path, "-map", "0:a:0", "-c:a", "copy",
+                    "-write_xing", "1", "-f", "mp3", output_path,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            os.replace(output_path, audio_path)
     except Exception:
         remove_if_exists(output_path)
         raise
@@ -1900,9 +1902,10 @@ async def generate_chunks(
                     audio = strip_id3v2(audio)
                     raw_for_duration = audio
 
-                with open(audio_path, "ab") as f:
-                    f.write(audio)
-                    f.flush()
+                with storage_write_guard(len(audio)):
+                    with open(audio_path, "ab") as f:
+                        f.write(audio)
+                        f.flush()
 
                 chunk_duration = mp3_duration_seconds(raw_for_duration)
                 if chunk_duration <= 0:
