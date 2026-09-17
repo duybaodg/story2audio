@@ -158,7 +158,7 @@ Copy `.env.example` to `.env`. Never commit `.env` or real tokens.
 | `ENABLE_GLOBAL_CACHE_CLEAR` | `false` | Keeps global destructive route unavailable |
 | `SESSION_SECRET` | random 32+ character secret | Signs browser ownership sessions; keep it only in the server `.env` |
 | `SESSION_COOKIE_SECURE` | `true` with HTTPS | Protects the anonymous ownership cookie |
-| `TRUST_PROXY_HEADERS` | `true` only behind a trusted proxy | Proxy must overwrite forwarded headers and port 8000 must not be public |
+| `FORWARDED_ALLOW_IPS` | Exact proxy IPs/CIDRs | Uvicorn ignores forwarded headers from every other peer; never use `*` |
 | `HF_TOKEN` | optional secret | Use a deployment secret, not an image build argument |
 
 ### Capacity and retention
@@ -190,7 +190,7 @@ Interactive OpenAPI documentation and the OpenAPI schema are disabled.
 | Subtitles | `GET /tts/subtitle/srt/{cache_id}`, `GET /tts/subtitle/vtt/{cache_id}`, `GET /tts/cues/stream/{cache_id}` |
 | TTS lifecycle | internal `GET /tts/health`, `DELETE /tts/file/{cache_id}` |
 | Upload | `POST /document/upload/initiate`, `/chunk`, `/complete` |
-| Documents | `GET /document/queue`, `GET/DELETE /document/{document_id}`, `POST /document/{document_id}/content` |
+| Documents | `GET/DELETE /document/{document_id}`, `POST /document/{document_id}/content` |
 | Extraction | `GET /document/{document_id}/extract/stream`, `POST /document/job/{document_id}/extract`, job status/result/retry/cancel routes |
 
 `DELETE /tts/cache` and `/tts/debug/chunks` are disabled by default.
@@ -204,7 +204,7 @@ Python 3.13, Redis, and FFmpeg are required.
 cp .env.example .env
 uv sync --locked
 docker compose up -d redis
-uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload --forwarded-allow-ips ""
 ```
 
 Run the worker separately when testing VieNeu:

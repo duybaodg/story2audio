@@ -14,6 +14,7 @@ import threading
 import traceback
 import secrets
 import subprocess
+import ipaddress
 from contextlib import contextmanager
 from typing import List, Dict, AsyncGenerator, Optional, Tuple
 
@@ -147,11 +148,16 @@ def _session_id_from_cookie(cookie_value: Optional[str]) -> Optional[str]:
 
 
 def get_client_ip(request: Request) -> str:
-    if TRUST_PROXY_HEADERS:
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """Return the canonical address already resolved by Uvicorn's trusted-proxy middleware."""
+    if not request.client:
+        return "unknown"
+    try:
+        address = ipaddress.ip_address(request.client.host)
+    except ValueError:
+        return "unknown"
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return address.compressed
 
 
 @app.middleware("http")
@@ -279,7 +285,16 @@ async def verify_session(request: Request, cache_id: str):
 # Config
 # ---------------------------------------------------------------------------
 PROXY = os.getenv("PROXY")
-TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "").lower() in {"1", "true", "yes"}
+FORWARDED_ALLOW_IPS = os.getenv("FORWARDED_ALLOW_IPS", "")
+for _trusted_proxy in filter(None, (item.strip() for item in FORWARDED_ALLOW_IPS.split(","))):
+    if _trusted_proxy == "*":
+        raise RuntimeError("FORWARDED_ALLOW_IPS must list exact trusted proxy IPs or CIDRs, not '*'")
+    try:
+        ipaddress.ip_network(_trusted_proxy, strict=True)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Invalid or non-canonical trusted proxy in FORWARDED_ALLOW_IPS: {_trusted_proxy}"
+        ) from exc
 SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "").lower() in {"1", "true", "yes"}
 ENABLE_DEBUG_TTS = os.getenv("ENABLE_DEBUG_TTS", "").lower() in {"1", "true", "yes"}
 VIENEU_MAX_WORKERS = get_pool_size()
@@ -2714,6 +2729,6 @@ async def periodic_job_cleanup():
 if __name__ == "__main__":
     import uvicorn
 
-    host = os.getenv("HOST", "0.0.0.0")
+    host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, forwarded_allow_ips=FORWARDED_ALLOW_IPS)
