@@ -20,6 +20,7 @@ Requirements: Docker Engine with Docker Compose and enough memory to load the Vi
 git clone https://github.com/duybaodg/story2audio.git
 cd story2audio
 cp .env.example .env
+sed -i.bak "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/; s/^HEALTHCHECK_TOKEN=.*/HEALTHCHECK_TOKEN=$(openssl rand -hex 32)/" .env
 docker compose --profile vieneu up -d --build --wait
 ```
 
@@ -56,6 +57,7 @@ Copy `.env.example` to `.env` and change only the values needed for the server.
 | `APP_PORT` | `127.0.0.1:8000` | Loopback host address and port mapped to the application. |
 | `APP_VERSION` | `v4.0.0` | Local Docker image tag and reported application version. |
 | `SESSION_SECRET` | required with HTTPS | Server-only secret used to sign browser sessions. |
+| `HEALTHCHECK_TOKEN` | derived from `SESSION_SECRET` | Optional dedicated token used by internal health probes. Minimum 32 characters. |
 | `TTS_MAX_TEXT_LENGTH` | `100000` | Maximum characters per TTS request. |
 | `VIENEU_MAX_WORDS` | `5000` | Maximum words per VieNeu request. |
 | `TTS_MAX_QUEUE_SIZE` | `20` | Maximum queued VieNeu jobs. |
@@ -119,7 +121,7 @@ Run the VieNeu worker separately when needed:
 uv run python tts_worker.py
 ```
 
-API documentation is available at `/docs`. Health endpoints are `/health` for the web/Redis stack and `/tts/health` for the VieNeu worker.
+API documentation is disabled. Internal health probes must send `X-Health-Token` with the server-only `HEALTHCHECK_TOKEN` value.
 
 ## Checks
 

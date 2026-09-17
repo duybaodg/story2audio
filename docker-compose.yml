@@ -49,6 +49,7 @@ services:
       REDIS_URL: "redis://redis:6379"
       TRUST_PROXY_HEADERS: "${TRUST_PROXY_HEADERS:-false}"
       SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      HEALTHCHECK_TOKEN: "${HEALTHCHECK_TOKEN:-}"
       TTS_MAX_TEXT_LENGTH: "${TTS_MAX_TEXT_LENGTH:-100000}"
       TTS_MAX_QUEUE_SIZE: "${TTS_MAX_QUEUE_SIZE:-20}"
       TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS: "${TTS_STREAM_FIRST_BYTE_TIMEOUT_SECONDS:-300}"
@@ -73,7 +74,7 @@ services:
     cpus: ${APP_CPU_LIMIT:-2.0}
     pids_limit: ${APP_PIDS_LIMIT:-256}
     healthcheck:
-      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import hashlib, hmac, os, urllib.request; token = os.environ.get('HEALTHCHECK_TOKEN') or hmac.new(os.environ['SESSION_SECRET'].encode(), b'story2audio-healthcheck', hashlib.sha256).hexdigest(); request = urllib.request.Request('http://127.0.0.1:8000/health', headers={'X-Health-Token': token}); urllib.request.urlopen(request, timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3

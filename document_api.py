@@ -130,7 +130,7 @@ async def _ensure_extraction_job(document, *, join_existing: bool) -> str:
         save_document(document)
         return job_id
 
-@router.get("/health")
+@router.get("/health", include_in_schema=False)
 async def health_check():
     """
     Health check endpoint for document module.

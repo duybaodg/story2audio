@@ -7,6 +7,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -15,6 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Set environment variable before importing modules
 os.environ['DOCUMENT_STORAGE_PATH'] = tempfile.mkdtemp()
+os.environ['HEALTHCHECK_TOKEN'] = 'test-health-token-that-is-at-least-32-characters'
 
 import main
 import document_api
@@ -23,6 +25,7 @@ from document_api import router
 app.include_router(router)
 
 client = TestClient(app)
+HEALTH_HEADERS = {"X-Health-Token": os.environ["HEALTHCHECK_TOKEN"]}
 
 
 def browser_session_id(test_client):
@@ -90,11 +93,39 @@ def test_upload_chunk_rejects_oversized_body():
     assert "exceeds expected" in response.json()["detail"]
 
 def test_health_check():
-    response = client.get("/document/health")
+    response = client.get("/document/health", headers=HEALTH_HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
     assert "active_sessions" in data
+
+
+def test_operational_routes_are_hidden_without_health_token():
+    for path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
+        assert client.get(path).status_code == 404
+    for path in ("/health", "/tts/health", "/document/health"):
+        assert client.get(path).status_code == 404
+        assert client.get(path, headers={"X-Health-Token": "wrong"}).status_code == 404
+
+
+def test_health_protection_handles_mounts_and_non_ascii_headers():
+    parent = FastAPI()
+    parent.mount("/api", app)
+    mounted = TestClient(parent)
+    assert mounted.get("/api/health").status_code == 404
+    assert mounted.get("/api/tts/health").status_code == 404
+    assert mounted.get("/api/document/health").status_code == 404
+    assert mounted.get("/api/document/health", headers=HEALTH_HEADERS).status_code == 200
+
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/health",
+        "root_path": "",
+        "headers": [(b"x-health-token", b"\xff")],
+    })
+    response = asyncio.run(main.protect_health_checks(request, lambda _: None))
+    assert response.status_code == 404
 
 
 def test_tts_delete_requires_cache_owner(tmp_path, monkeypatch):
@@ -528,8 +559,8 @@ def test_document_routes_are_isolated_by_browser_session(tmp_path):
 
     owner = TestClient(app)
     stranger = TestClient(app)
-    owner.get("/document/health")
-    stranger.get("/document/health")
+    owner.get("/")
+    stranger.get("/")
     owner_session = browser_session_id(owner)
     document = Document(
         document_id="private-doc",
@@ -628,5 +659,5 @@ def test_health_fails_when_redis_is_unavailable(monkeypatch):
 
     monkeypatch.setattr(main, "redis_is_ready", unavailable)
     monkeypatch.setattr(main, "vieneu_worker_is_ready", unavailable)
-    assert client.get("/health").status_code == 503
-    assert client.get("/tts/health").status_code == 503
+    assert client.get("/health", headers=HEALTH_HEADERS).status_code == 503
+    assert client.get("/tts/health", headers=HEALTH_HEADERS).status_code == 503

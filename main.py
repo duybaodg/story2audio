@@ -53,6 +53,24 @@ from tts_queue import (
 
 load_dotenv()
 
+_configured_healthcheck_token = os.getenv("HEALTHCHECK_TOKEN", "")
+if _configured_healthcheck_token == "replace-with-a-long-random-value":
+    _configured_healthcheck_token = ""
+if _configured_healthcheck_token and len(_configured_healthcheck_token) < 32:
+    raise RuntimeError("HEALTHCHECK_TOKEN must be at least 32 characters")
+_healthcheck_session_secret = os.getenv("SESSION_SECRET", "")
+if (
+    not _configured_healthcheck_token
+    and _healthcheck_session_secret != "replace-with-a-long-random-value"
+    and len(_healthcheck_session_secret) >= 32
+):
+    _configured_healthcheck_token = hmac.new(
+        _healthcheck_session_secret.encode(),
+        b"story2audio-healthcheck",
+        hashlib.sha256,
+    ).hexdigest()
+HEALTHCHECK_TOKEN = _configured_healthcheck_token
+
 # ---------------------------------------------------------------------------
 # Windows asyncio patch (suppress benign socket shutdown errors)
 # ---------------------------------------------------------------------------
@@ -90,7 +108,12 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Ebook to Audio + Live Subtitles API")
+app = FastAPI(
+    title="Ebook to Audio + Live Subtitles API",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(document_router)
 
@@ -184,6 +207,23 @@ async def rate_limit_middleware(request: Request, call_next):
             if not allowed:
                 return JSONResponse(status_code=429, content={"detail": error})
 
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def protect_health_checks(request: Request, call_next):
+    path = request.scope.get("path", "")
+    root_path = request.scope.get("root_path", "")
+    if root_path and path.startswith(root_path):
+        path = "/" + path[len(root_path):].lstrip("/")
+    if path.rstrip("/") in {"/health", "/tts/health", "/document/health"}:
+        supplied_token = request.headers.get("X-Health-Token", "").encode()
+        authorized = HEALTHCHECK_TOKEN and secrets.compare_digest(
+            supplied_token,
+            HEALTHCHECK_TOKEN.encode(),
+        )
+        if not authorized:
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
     return await call_next(request)
 
 
@@ -1986,7 +2026,7 @@ async def get_voices():
     }
 
 
-@app.get("/tts/health")
+@app.get("/tts/health", include_in_schema=False)
 async def health_check():
     ready = await vieneu_worker_is_ready()
     return JSONResponse(
@@ -2593,7 +2633,7 @@ async def debug_chunks(request: TTSRequest):
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 async def health():
     ready = await redis_is_ready()
     return JSONResponse(

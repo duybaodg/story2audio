@@ -101,13 +101,13 @@ chmod 600 .env
 nano .env
 ```
 
-Generate a server-only signing secret and add it to `.env`:
+Generate server-only secrets and add them to `.env`:
 
 ```bash
-printf 'SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+sed -i.bak "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/; s/^HEALTHCHECK_TOKEN=.*/HEALTHCHECK_TOKEN=$(openssl rand -hex 32)/" .env
 ```
 
-Do not store `SESSION_SECRET` in GitHub; it belongs only in the server `.env`.
+Do not store either secret in GitHub; they belong only in the server `.env`.
 
 For direct access on port 8000, keep:
 
@@ -185,8 +185,8 @@ Verify all services:
 
 ```bash
 docker compose --profile vieneu ps
-curl --fail http://127.0.0.1:8000/health
-curl --fail http://127.0.0.1:8000/tts/health
+docker compose exec -T app /app/.venv/bin/python -c "import hashlib, hmac, os, urllib.request; token = os.environ.get('HEALTHCHECK_TOKEN') or hmac.new(os.environ['SESSION_SECRET'].encode(), b'story2audio-healthcheck', hashlib.sha256).hexdigest(); urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/health', headers={'X-Health-Token': token}), timeout=5)"
+docker compose exec -T app /app/.venv/bin/python -c "import hashlib, hmac, os, urllib.request; token = os.environ.get('HEALTHCHECK_TOKEN') or hmac.new(os.environ['SESSION_SECRET'].encode(), b'story2audio-healthcheck', hashlib.sha256).hexdigest(); urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/tts/health', headers={'X-Health-Token': token}), timeout=5)"
 ```
 
 Expected health responses:
@@ -277,8 +277,8 @@ On the server:
 cd "/home/DEPLOY_USER/story2audio"
 docker compose --profile vieneu ps
 docker compose --profile vieneu logs --tail=100
-curl --fail http://127.0.0.1:8000/health
-curl --fail http://127.0.0.1:8000/tts/health
+docker compose exec -T app /app/.venv/bin/python -c "import hashlib, hmac, os, urllib.request; token = os.environ.get('HEALTHCHECK_TOKEN') or hmac.new(os.environ['SESSION_SECRET'].encode(), b'story2audio-healthcheck', hashlib.sha256).hexdigest(); urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/health', headers={'X-Health-Token': token}), timeout=5)"
+docker compose exec -T app /app/.venv/bin/python -c "import hashlib, hmac, os, urllib.request; token = os.environ.get('HEALTHCHECK_TOKEN') or hmac.new(os.environ['SESSION_SECRET'].encode(), b'story2audio-healthcheck', hashlib.sha256).hexdigest(); urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/tts/health', headers={'X-Health-Token': token}), timeout=5)"
 ```
 
 Persistent data is stored in Docker volumes. Do not run `docker compose down -v` unless you intentionally want to delete cached audio, documents, jobs, models, and Redis data.
