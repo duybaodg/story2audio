@@ -44,6 +44,6 @@ USER app
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD ["/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+    CMD ["/app/.venv/bin/python", "-c", "import hashlib, hmac, os, urllib.request; token = os.environ.get('HEALTHCHECK_TOKEN') or hmac.new(os.environ['SESSION_SECRET'].encode(), b'story2audio-healthcheck', hashlib.sha256).hexdigest(); request = urllib.request.Request('http://127.0.0.1:8000/health', headers={'X-Health-Token': token}); urllib.request.urlopen(request, timeout=5)"]
 
 CMD ["/app/.venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

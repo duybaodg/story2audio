@@ -165,6 +165,7 @@ Copy `.env.example` to `.env`. Never commit `.env` or real tokens.
 
 | Variable | Default/Compose value | Purpose |
 | --- | --- | --- |
+| `HEALTHCHECK_TOKEN` | derived from `SESSION_SECRET` | Optional dedicated token for internal health probes |
 | `TTS_MAX_TEXT_LENGTH` | `100000` | Maximum normalized characters per request |
 | `VIENEU_MAX_WORDS` | `5000` | VieNeu-specific word limit |
 | `TTS_MAX_QUEUE_SIZE` | `20` | Maximum pending VieNeu jobs |
@@ -180,19 +181,20 @@ Copy `.env.example` to `.env`. Never commit `.env` or real tokens.
 
 ## API Summary
 
-Interactive OpenAPI documentation is available at `/docs`.
+Interactive OpenAPI documentation and the OpenAPI schema are disabled.
 
 | Area | Important endpoints |
 | --- | --- |
-| General | `GET /`, `GET /health` |
+| General | `GET /`, internal `GET /health` |
 | TTS | `POST /tts/start`, `GET /tts/status/{cache_id}`, `GET /tts/stream/{cache_id}`, `GET /tts/file/{cache_id}` |
 | Subtitles | `GET /tts/subtitle/srt/{cache_id}`, `GET /tts/subtitle/vtt/{cache_id}`, `GET /tts/cues/stream/{cache_id}` |
-| TTS lifecycle | `GET /tts/health`, `DELETE /tts/file/{cache_id}` |
+| TTS lifecycle | internal `GET /tts/health`, `DELETE /tts/file/{cache_id}` |
 | Upload | `POST /document/upload/initiate`, `/chunk`, `/complete` |
 | Documents | `GET /document/queue`, `GET/DELETE /document/{document_id}`, `POST /document/{document_id}/content` |
 | Extraction | `GET /document/{document_id}/extract/stream`, `POST /document/job/{document_id}/extract`, job status/result/retry/cancel routes |
 
 `DELETE /tts/cache` and `/tts/debug/chunks` are disabled by default.
+Health routes require the server-only `X-Health-Token` header.
 
 ## Local Development
 
